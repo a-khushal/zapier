@@ -1,18 +1,24 @@
 "use client"
 
+import axios from 'axios';
 import { ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import React, { useState } from 'react';
 
 export default function Login() {
+  const router = useRouter();
     const [showPassword, setShowPassword] = useState(false);
     const [formData, setFormData] = useState({
         email: '',
         password: ''
     });
     
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         console.log('Form submitted:', formData);
+        const response = await axios.post("http://localhost:8080/api/v1/user/signin", formData);
+        localStorage.setItem("token", "Bearer " + response.data.token);
+        router.push("/dashboard")
     };
 
     return (

@@ -2,19 +2,23 @@
 
 import React, { useState } from 'react';
 import { Check, Eye, EyeOff } from 'lucide-react';
-import { GOogleSVG } from '@/components/Hero';
+import axios from 'axios';
+import { useRouter } from 'next/navigation';
 
 function App() {
+  const router = useRouter()
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     email: '',
-    name: '',
+    userName: '',
     password: ''
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     console.log('Form submitted:', formData);
+    await axios.post("http://localhost:8080/api/v1/user/signup", formData);
+    router.push("/login")
   };
 
   const features = [
@@ -51,7 +55,7 @@ function App() {
         </div>
 
         <div className="bg-white p-8 rounded-lg shadow-sm border border-gray-200">
-          <button className="w-full bg-[#4285f4] text-white rounded-md py-2.5 px-4 flex items-center justify-center gap-2 mb-6">
+          {/* <button className="w-full bg-[#4285f4] text-white rounded-md py-2.5 px-4 flex items-center justify-center gap-2 mb-6">
             <div className='p-px bg-white rounded-sm inline-block'>
               <GOogleSVG />
             </div>
@@ -65,7 +69,9 @@ function App() {
             <div className="relative flex justify-center">
               <span className="bg-white px-4 text-sm text-gray-500">OR</span>
             </div>
-          </div>
+          </div> */}
+
+          <div className='flex justify-center items-center mb-6 text-xl font-semibold'>Sign up to Zapier</div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -90,8 +96,9 @@ function App() {
                   type="text"
                   required
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  value={formData.userName}
+                  onChange={(e) => setFormData({ ...formData, userName: e.target.value })}
+                  minLength={3}
                 />
               </div>
               <div className="relative">
@@ -105,6 +112,7 @@ function App() {
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 pr-10"
                             value={formData.password}
                             onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                            minLength={8}
                         />
                         <button
                             type="button"
@@ -117,7 +125,7 @@ function App() {
                 </div>
             </div>
             <div className="text-sm text-gray-600">
-              By signing up, you agree to Zapier's{' '}
+              By signing up, you agree to Zapier&lsquo;s{' '}
               <a href="#" className="text-blue-600 hover:underline">terms of service</a>{' '}
               and{' '}
               <a href="#" className="text-blue-600 hover:underline">privacy policy</a>.
