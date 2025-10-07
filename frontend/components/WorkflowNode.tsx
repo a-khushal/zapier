@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Handle, Position } from 'reactflow';
-import { Clock, MoreVertical, AlertCircle, Zap, Trash2 } from 'lucide-react';
+import { Clock, MoreVertical, AlertCircle, Zap, Trash2, Bolt } from 'lucide-react';
 
 interface WorkflowNodeProps {
     id: string;
@@ -34,9 +34,7 @@ const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data, draggable = false
                 onMouseDown={handleMouseDown}
                 className={`bg-white rounded-lg shadow-md border-2 w-80 transition-all ${
                     isAction ? 'border-dashed border-gray-300' : 'border-gray-200'
-                } ${
-                    isTrigger ? 'cursor-move hover:shadow-lg' : 'cursor-default'
-                }`}
+                } cursor-pointer`}
             >
                 <div className="p-4">
                     <div className="flex items-start justify-between mb-2">
@@ -53,8 +51,8 @@ const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data, draggable = false
                                 </div>
                             ) : (
                                 <div className="flex items-center gap-2">
-                                    <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center">
-                                        <Zap className="w-4 h-4 text-white" />
+                                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
+                                        {isTrigger ? <Bolt className="w-4 h-4 text-orange-500" /> : <Zap className="w-4 h-4 text-orange-500" />}
                                     </div>
                                     <span className="font-medium text-gray-900">{data.title}</span>
                                 </div>

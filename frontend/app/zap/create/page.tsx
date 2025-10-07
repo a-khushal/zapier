@@ -217,7 +217,7 @@ function App() {
       height: '100vh',
       backgroundColor: '#f0f0f0',
       position: 'relative',
-      overflow: 'hidden'
+      overflow: 'hidden',
     }}>
       <ReactFlow
         nodes={nodesWithCallbacks}

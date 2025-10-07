@@ -24,7 +24,7 @@ export default function Appbar() {
     return (
         <header className="flex justify-between items-center py-2 px-14 bg-white border-b-2 border-gray-20">
             <h1
-                className="font-black text-3xl hover:cursor-pointer flex"
+                className="font-black text-3xl cursor-default flex"
                 onClick={() => router.push("/")}
             >
                 <div className="h-1 w-4 bg-orange-500 mt-6 mr-px"></div>
