@@ -21,24 +21,6 @@ const nodeTypes = {
   workflowNode: WorkflowNode,
 };
 
-const initialNodes: Node[] = [
-  {
-    id: '1',
-    type: 'workflowNode',
-    position: { x: 250, y: 50 },
-    draggable: false,
-    data: {
-      icon: 'trigger',
-      title: 'Trigger',
-      subtitle: '1. Select the trigger for your Zap to run',
-      type: 'trigger',
-      onAddNode: null,
-      onDeleteNode: null,
-      isWorkflowRoot: true
-    }
-  },
-];
-
 const initialEdges: Edge[] = [
   {
     id: 'e1-2',
@@ -55,7 +37,7 @@ const initialEdges: Edge[] = [
 
 function App() {
   useAuth();
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [nodeIdCounter, setNodeIdCounter] = useState(6);
 
@@ -63,6 +45,33 @@ function App() {
     (params: Connection) => setEdges((eds: Edge[]) => addEdge(params, eds)),
     [setEdges]
   );
+
+  React.useEffect(() => {
+    const nodeWidth = 250;
+    const nodeHeight = 100;
+
+    const centerNode: Node = {
+      id: '1',
+      type: 'workflowNode',
+      position: {
+        x: window.innerWidth / 2 - nodeWidth / 2,
+        y: window.innerHeight / 2 - (nodeHeight / 2) * 2,
+      },
+      draggable: false,
+      data: {
+        icon: 'trigger',
+        title: 'Trigger',
+        subtitle: '1. Select the trigger for your Zap to run',
+        type: 'trigger',
+        onAddNode: null,
+        onDeleteNode: null,
+        isWorkflowRoot: true
+      }
+    };
+
+    setNodes([centerNode]);
+  }, []);
+
 
   const addNodeAfter = useCallback((afterNodeId: string) => {
     setNodes((nds: Node[]) => {
@@ -79,7 +88,7 @@ function App() {
         id: newNodeId,
         type: 'workflowNode',
         position: {
-          x: 250,
+          x: afterNode.position.x,
           y: afterNode.position.y + 170,
         },
         data: {
@@ -166,8 +175,8 @@ function App() {
             subtitle: `${stepNumber}. ${subtitleParts.slice(1).join('. ')}`
           },
           position: {
-            x: 250,
-            y: 50 + (index * 170)
+            x: nds[0]?.position.x || 250,
+            y: 50 + index * 170,
           }
         };
       });
@@ -202,7 +211,6 @@ function App() {
     draggable: false,
     position: {
       ...node.position,
-      x: 250,
     },
     data: {
       ...node.data,
@@ -226,7 +234,6 @@ function App() {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         nodeTypes={nodeTypes}
-        fitView
         className="bg-white"
         nodesDraggable={false}
         panOnDrag={[0, 1, 2]}

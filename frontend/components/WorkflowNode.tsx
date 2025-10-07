@@ -32,11 +32,11 @@ const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data, draggable = false
         <div className="relative">
             <div
                 onMouseDown={handleMouseDown}
-                className={`bg-white rounded-lg shadow-md border-2 w-80 transition-all ${
+                className={`bg-white rounded-lg shadow-md border-2 w-70 transition-all ${
                     isAction ? 'border-dashed border-gray-300' : 'border-gray-200'
                 } cursor-pointer`}
             >
-                <div className="p-4">
+                <div className="py-2 px-4">
                     <div className="flex items-start justify-between mb-2">
                         <div className="flex items-center gap-2">
                             {data.icon === 'gmail' ? (
