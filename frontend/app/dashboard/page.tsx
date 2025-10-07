@@ -41,10 +41,18 @@ interface Zap {
 function useZaps() {
     const [loading, setLoading] = useState(true);
     const [zaps, setZaps] = useState<Zap[]>([]);
+    const router = useRouter();
 
     useEffect(() => {
         const fetchZaps = async () => {
             try {
+                const token = localStorage.getItem("token");
+                if (!token) {
+                    console.error("No token found in localStorage");
+                    router.push("/login");
+                    return;
+                }
+
                 const response = await axios.get("http://localhost:8080/api/v1/zap", {
                     headers: {
                         Authorization: localStorage.getItem("token") as string

@@ -1,3 +1,6 @@
+import dotenv from "dotenv"
+dotenv.config({ path: "./.env" });
+
 import express, { Request, Response } from "express"
 import { userRouter } from "./router/userRouter";
 import { zapRouter } from "./router/zapRouter";
