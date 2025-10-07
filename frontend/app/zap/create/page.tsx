@@ -1,47 +1,333 @@
 "use client"
 
-import React, { useCallback } from 'react';
-import {
-  ReactFlow,
-  MiniMap,
-  Controls,
+import React, { useCallback, useState } from 'react';
+import ReactFlow, {
+  Node,
+  BackgroundVariant,
+  Edge,
+  addEdge,
   Background,
+  Controls,
+  Connection,
   useNodesState,
   useEdgesState,
-  addEdge,
-  BackgroundVariant,
-} from '@xyflow/react';
- 
-import '@xyflow/react/dist/style.css';
- 
-const initialNodes = [
-  { id: '1', position: { x: 0, y: 0 }, data: { label: '1' } },
-  { id: '2', position: { x: 0, y: 100 }, data: { label: '2' } },
+  MarkerType,
+} from 'reactflow';
+import 'reactflow/dist/style.css';
+import WorkflowNode from '@/components/WorkflowNode';
+
+const nodeTypes = {
+  workflowNode: WorkflowNode,
+};
+
+const initialNodes: Node[] = [
+  {
+    id: '1',
+    type: 'workflowNode',
+    position: { x: 250, y: 50 },
+    draggable: false,
+    data: {
+      icon: 'gmail',
+      title: 'Gmail (1.1.12)',
+      subtitle: '1. New Email',
+      badge: '15 min',
+      type: 'trigger',
+      onAddNode: null,
+      onDeleteNode: null,
+      isWorkflowRoot: true
+    }
+  },
+  {
+    id: '2',
+    type: 'workflowNode',
+    position: { x: 250, y: 220 },
+    draggable: false,
+    data: {
+      icon: 'action',
+      title: 'Action',
+      subtitle: '2. Select the event for your Zap to run',
+      type: 'action',
+      onAddNode: null,
+      onDeleteNode: null,
+    }
+  },
+  {
+    id: '3',
+    type: 'workflowNode',
+    position: { x: 250, y: 390 },
+    draggable: false,
+    data: {
+      icon: 'gmail',
+      title: 'Gmail (1.1.12)',
+      subtitle: '3. Select the event',
+      type: 'event',
+      onAddNode: null,
+      onDeleteNode: null,
+    }
+  },
+  {
+    id: '4',
+    type: 'workflowNode',
+    position: { x: 250, y: 560 },
+    draggable: false,
+    data: {
+      icon: 'action',
+      title: 'Action',
+      subtitle: '4. Select the event for your Zap to run',
+      type: 'action',
+      onAddNode: null,
+      onDeleteNode: null,
+    }
+  },
+  {
+    id: '5',
+    type: 'workflowNode',
+    position: { x: 250, y: 730 },
+    draggable: false,
+    data: {
+      icon: 'action',
+      title: 'Action',
+      subtitle: '5. Select the event for your Zap to run',
+      type: 'action',
+      onAddNode: null,
+      onDeleteNode: null,
+    }
+  },
 ];
-const initialEdges = [{ id: 'e1-2', source: '1', target: '2' }];
- 
-export default function App() {
+
+const initialEdges: Edge[] = [
+  {
+    id: 'e1-2',
+    source: '1',
+    target: '2',
+    type: 'default',
+    style: { stroke: '#9ca3af', strokeWidth: 2 },
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: '#9ca3af',
+    },
+  },
+  {
+    id: 'e2-3',
+    source: '2',
+    target: '3',
+    type: 'default',
+    style: { stroke: '#9ca3af', strokeWidth: 2 },
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: '#9ca3af',
+    },
+  },
+  {
+    id: 'e3-4',
+    source: '3',
+    target: '4',
+    type: 'default',
+    style: { stroke: '#9ca3af', strokeWidth: 2 },
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: '#9ca3af',
+    },
+  },
+  {
+    id: 'e4-5',
+    source: '4',
+    target: '5',
+    type: 'default',
+    style: { stroke: '#9ca3af', strokeWidth: 2 },
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: '#9ca3af',
+    },
+  },
+];
+
+function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
- 
+  const [nodeIdCounter, setNodeIdCounter] = useState(6);
+
   const onConnect = useCallback(
-    (params) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges],
+    (params: Connection) => setEdges((eds: Edge[]) => addEdge(params, eds)),
+    [setEdges]
   );
- 
+
+  const addNodeAfter = useCallback((afterNodeId: string) => {
+    setNodes((nds: Node[]) => {
+      const afterNode = nds.find((n) => n.id === afterNodeId);
+      if (!afterNode) return nds;
+
+      const afterNodeIndex = nds.findIndex((n) => n.id === afterNodeId);
+      const nodesAfter = nds.slice(afterNodeIndex + 1);
+
+      const newNodeId = `${nodeIdCounter}`;
+      setNodeIdCounter((c) => c + 1);
+
+      const newNode: Node = {
+        id: newNodeId,
+        type: 'workflowNode',
+        position: {
+          x: 250,
+          y: afterNode.position.y + 170,
+        },
+        data: {
+          icon: 'action',
+          title: 'Action',
+          subtitle: `${afterNodeIndex + 2}. Select the event for your Zap to run`,
+          type: 'action',
+          onAddNode: addNodeAfter,
+          onDeleteNode: deleteNode,
+        },
+      };
+
+      const updatedNodes = [...nds.slice(0, afterNodeIndex + 1), newNode];
+      nodesAfter.forEach((node) => {
+        updatedNodes.push({
+          ...node,
+          position: { ...node.position, y: node.position.y + 170 },
+        });
+      });
+
+      return updatedNodes;
+    });
+
+    setEdges((eds: Edge[]) => {
+      const edgeToRemove = eds.find((e) => e.source === afterNodeId);
+      const newNodeId = `${nodeIdCounter}`;
+
+      if (edgeToRemove) {
+        const newEdges = eds.filter((e) => e.source !== afterNodeId);
+        newEdges.push({
+          id: `e${afterNodeId}-${newNodeId}`,
+          source: afterNodeId,
+          target: newNodeId,
+          type: 'default',
+          style: { stroke: '#9ca3af', strokeWidth: 2 },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: '#9ca3af',
+          },
+        });
+        newEdges.push({
+          id: `e${newNodeId}-${edgeToRemove.target}`,
+          source: newNodeId,
+          target: edgeToRemove.target,
+          type: 'default',
+          style: { stroke: '#9ca3af', strokeWidth: 2 },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: '#9ca3af',
+          },
+        });
+        return newEdges;
+      } else {
+        return [...eds, {
+          id: `e${afterNodeId}-${newNodeId}`,
+          source: afterNodeId,
+          target: newNodeId,
+          type: 'default',
+          style: { stroke: '#9ca3af', strokeWidth: 2 },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: '#9ca3af',
+          },
+        }];
+      }
+    });
+  }, [nodeIdCounter, setNodes, setEdges]);
+
+  const deleteNode = useCallback((nodeId: string) => {
+    setNodes((nds: Node[]) => {
+      const nodeIndex = nds.findIndex((n) => n.id === nodeId);
+      if (nodeIndex === 0) return nds;
+
+      const nodeToDelete = nds[nodeIndex];
+      const nodesAfter = nds.slice(nodeIndex + 1);
+
+      const updatedNodes = [...nds.slice(0, nodeIndex)];
+      nodesAfter.forEach((node) => {
+        updatedNodes.push({
+          ...node,
+          position: { ...node.position, y: node.position.y - 170 },
+        });
+      });
+
+      return updatedNodes;
+    });
+
+    setEdges((eds: Edge[]) => {
+      const incomingEdge = eds.find((e) => e.target === nodeId);
+      const outgoingEdge = eds.find((e) => e.source === nodeId);
+
+      const newEdges = eds.filter((e) => e.source !== nodeId && e.target !== nodeId);
+
+      if (incomingEdge && outgoingEdge) {
+        newEdges.push({
+          id: `e${incomingEdge.source}-${outgoingEdge.target}`,
+          source: incomingEdge.source,
+          target: outgoingEdge.target,
+          type: 'default',
+          style: { stroke: '#9ca3af', strokeWidth: 2 },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: '#9ca3af',
+          },
+        });
+      }
+
+      return newEdges;
+    });
+  }, [setNodes, setEdges]);
+
+  const nodesWithCallbacks = nodes.map((node) => ({
+    ...node,
+    draggable: false,
+    position: {
+      ...node.position,
+      x: 250,
+    },
+    data: {
+      ...node.data,
+      onAddNode: addNodeAfter,
+      onDeleteNode: deleteNode,
+    },
+  }));
+
   return (
-    <div style={{ width: '100vw', height: '100vh' }}>
+    <div style={{
+      width: '100vw',
+      height: '100vh',
+      backgroundColor: '#f0f0f0',
+      position: 'relative',
+      overflow: 'hidden'
+    }}>
       <ReactFlow
-        nodes={nodes}
+        nodes={nodesWithCallbacks}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        nodeTypes={nodeTypes}
+        fitView
+        className="bg-white"
+        nodesDraggable={false}
+        panOnDrag={[0, 1, 2]}
+        onPaneClick={(e) => {
+          e.preventDefault();
+        }}
+        zoomOnScroll={true}
+        zoomOnPinch={true}
+        zoomOnDoubleClick={false}
+        panOnScroll={false}
+        minZoom={0.5}
+        maxZoom={2}
+        defaultViewport={{ x: 0, y: 0, zoom: 1 }}
       >
+        <Background variant={BackgroundVariant.Dots} color="#d1d5db" gap={16} size={1} />
         <Controls />
-        <MiniMap />
-        <Background variant={BackgroundVariant.Cross} gap={12} size={1} />
       </ReactFlow>
     </div>
   );
 }
+
+export default App;
