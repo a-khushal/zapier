@@ -28,7 +28,7 @@ export default function Appbar() {
                 onClick={() => router.push("/")}
             >
                 <div className="h-1 w-4 bg-orange-500 mt-6 mr-px"></div>
-                zapier
+                Synq
             </h1>
 
             <nav className="flex gap-6 items-center text-gray-800 text-sm">

@@ -20,7 +20,7 @@ const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data, draggable = false
     const [showMenu, setShowMenu] = useState(false);
     const isAction = data.type === 'action';
     const isTrigger = data.type === 'trigger';
-    
+
     const handleMouseDown = isTrigger 
         ? (e: React.MouseEvent) => {
             e.preventDefault();
@@ -30,12 +30,6 @@ const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data, draggable = false
 
     return (
         <div className="relative">
-            <Handle
-                type="target"
-                position={Position.Top}
-                className="w-3 h-3 !bg-gray-400"
-            />
-
             <div
                 onMouseDown={handleMouseDown}
                 className={`bg-white rounded-lg shadow-md border-2 w-80 transition-all ${
@@ -101,12 +95,6 @@ const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data, draggable = false
                     </div>
                 </div>
             </div>
-
-            <Handle
-                type="target"
-                position={Position.Top}
-                className="w-3 h-3 !bg-gray-400"
-            />
 
             <div className="relative h-8">
                 <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 z-10">

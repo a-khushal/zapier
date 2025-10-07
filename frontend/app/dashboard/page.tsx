@@ -4,6 +4,7 @@ import axios from "axios";
 import { ChevronRight, PlusIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
 
 type TriggerType = {
     id: string;
@@ -41,7 +42,6 @@ interface Zap {
 function useZaps() {
     const [loading, setLoading] = useState(true);
     const [zaps, setZaps] = useState<Zap[]>([]);
-    const router = useRouter();
 
     useEffect(() => {
         const fetchZaps = async () => {
@@ -49,7 +49,6 @@ function useZaps() {
                 const token = localStorage.getItem("token");
                 if (!token) {
                     console.error("No token found in localStorage");
-                    router.push("/login");
                     return;
                 }
 
@@ -73,6 +72,7 @@ function useZaps() {
 }
 
 export default function Dashboard() {
+    useAuth();
     const { loading, zaps } = useZaps();
     const router = useRouter()
 

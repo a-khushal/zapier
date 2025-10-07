@@ -40,7 +40,7 @@ function App() {
       <div className="max-w-6xl w-full grid md:grid-cols-2 gap-12 items-center">
         <div className="space-y-8">
           <h1 className="text-4xl font-bold text-gray-900">
-            Join millions worldwide who automate their work using Zapier.
+            Join millions worldwide who automate their work using Synq.
           </h1>
           <div className="space-y-4">
             {features.map((feature, index) => (
@@ -71,7 +71,7 @@ function App() {
             </div>
           </div> */}
 
-          <div className='flex justify-center items-center mb-6 text-xl font-semibold'>Sign up to Zapier</div>
+          <div className='flex justify-center items-center mb-6 text-xl font-semibold'>Sign up to Synq</div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -125,7 +125,7 @@ function App() {
                 </div>
             </div>
             <div className="text-sm text-gray-600">
-              By signing up, you agree to Zapier&lsquo;s{' '}
+              By signing up, you agree to Synq&lsquo;s{' '}
               <a href="#" className="text-blue-600 hover:underline">terms of service</a>{' '}
               and{' '}
               <a href="#" className="text-blue-600 hover:underline">privacy policy</a>.

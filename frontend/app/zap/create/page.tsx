@@ -15,6 +15,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import WorkflowNode from '@/components/WorkflowNode';
+import { useAuth } from '@/hooks/useAuth';
 
 const nodeTypes = {
   workflowNode: WorkflowNode,
@@ -27,70 +28,13 @@ const initialNodes: Node[] = [
     position: { x: 250, y: 50 },
     draggable: false,
     data: {
-      icon: 'gmail',
-      title: 'Gmail (1.1.12)',
-      subtitle: '1. New Email',
-      badge: '15 min',
+      icon: 'trigger',
+      title: 'Trigger',
+      subtitle: '1. Select the trigger for your Zap to run',
       type: 'trigger',
       onAddNode: null,
       onDeleteNode: null,
       isWorkflowRoot: true
-    }
-  },
-  {
-    id: '2',
-    type: 'workflowNode',
-    position: { x: 250, y: 220 },
-    draggable: false,
-    data: {
-      icon: 'action',
-      title: 'Action',
-      subtitle: '2. Select the event for your Zap to run',
-      type: 'action',
-      onAddNode: null,
-      onDeleteNode: null,
-    }
-  },
-  {
-    id: '3',
-    type: 'workflowNode',
-    position: { x: 250, y: 390 },
-    draggable: false,
-    data: {
-      icon: 'gmail',
-      title: 'Gmail (1.1.12)',
-      subtitle: '3. Select the event',
-      type: 'event',
-      onAddNode: null,
-      onDeleteNode: null,
-    }
-  },
-  {
-    id: '4',
-    type: 'workflowNode',
-    position: { x: 250, y: 560 },
-    draggable: false,
-    data: {
-      icon: 'action',
-      title: 'Action',
-      subtitle: '4. Select the event for your Zap to run',
-      type: 'action',
-      onAddNode: null,
-      onDeleteNode: null,
-    }
-  },
-  {
-    id: '5',
-    type: 'workflowNode',
-    position: { x: 250, y: 730 },
-    draggable: false,
-    data: {
-      icon: 'action',
-      title: 'Action',
-      subtitle: '5. Select the event for your Zap to run',
-      type: 'action',
-      onAddNode: null,
-      onDeleteNode: null,
     }
   },
 ];
@@ -107,42 +51,10 @@ const initialEdges: Edge[] = [
       color: '#9ca3af',
     },
   },
-  {
-    id: 'e2-3',
-    source: '2',
-    target: '3',
-    type: 'default',
-    style: { stroke: '#9ca3af', strokeWidth: 2 },
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: '#9ca3af',
-    },
-  },
-  {
-    id: 'e3-4',
-    source: '3',
-    target: '4',
-    type: 'default',
-    style: { stroke: '#9ca3af', strokeWidth: 2 },
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: '#9ca3af',
-    },
-  },
-  {
-    id: 'e4-5',
-    source: '4',
-    target: '5',
-    type: 'default',
-    style: { stroke: '#9ca3af', strokeWidth: 2 },
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: '#9ca3af',
-    },
-  },
 ];
 
 function App() {
+  useAuth();
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [nodeIdCounter, setNodeIdCounter] = useState(6);
@@ -239,20 +151,26 @@ function App() {
   const deleteNode = useCallback((nodeId: string) => {
     setNodes((nds: Node[]) => {
       const nodeIndex = nds.findIndex((n) => n.id === nodeId);
-      if (nodeIndex === 0) return nds;
+      if (nodeIndex === -1) return nds;
 
-      const nodeToDelete = nds[nodeIndex];
-      const nodesAfter = nds.slice(nodeIndex + 1);
+      const updatedNodes = nds.filter((n) => n.id !== nodeId);
 
-      const updatedNodes = [...nds.slice(0, nodeIndex)];
-      nodesAfter.forEach((node) => {
-        updatedNodes.push({
+      return updatedNodes.map((node, index) => {
+        const subtitleParts = node.data.subtitle?.split('. ') || [];
+        const stepNumber = index + 1;
+
+        return {
           ...node,
-          position: { ...node.position, y: node.position.y - 170 },
-        });
+          data: {
+            ...node.data,
+            subtitle: `${stepNumber}. ${subtitleParts.slice(1).join('. ')}`
+          },
+          position: {
+            x: 250,
+            y: 50 + (index * 170)
+          }
+        };
       });
-
-      return updatedNodes;
     });
 
     setEdges((eds: Edge[]) => {
@@ -277,7 +195,7 @@ function App() {
 
       return newEdges;
     });
-  }, [setNodes, setEdges]);
+  }, []);
 
   const nodesWithCallbacks = nodes.map((node) => ({
     ...node,

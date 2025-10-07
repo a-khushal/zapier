@@ -24,7 +24,7 @@ function LeftSection() {
             <span className="inline-block hover:cursor-pointer">
                 <span className="flex justify-start items-center rounded-full bg-slate-100 py-1 px-3 gap-2 text-sm">
                     <span className="flex justify-center items-center border-black border py-1 px-2 rounded-full">New</span>
-                    <span className="flex justify-center items-center">Zapier Enterprise is here <ArrowRightIcon className="w-5 m-1"/></span>
+                    <span className="flex justify-center items-center">Synq Enterprise is here <ArrowRightIcon className="w-5 m-1"/></span>
                 </span>
             </span>
             <div className="mt-6 tracking-tighter text-[85px] leading-[80px] font-black">

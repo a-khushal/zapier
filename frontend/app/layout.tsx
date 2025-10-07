@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Zapier",
+  title: "Synq",
   description: "Automation made simple",
 };
 
