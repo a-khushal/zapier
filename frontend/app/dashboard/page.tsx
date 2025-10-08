@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 type TriggerType = {
     id: string;
     name: string;
+    image: string;
 }
 
 interface Trigger {
@@ -21,6 +22,7 @@ interface Trigger {
 type ActionType = {
     id: string;
     name: string;
+    image: string;
 }
 
 interface Action {
@@ -115,9 +117,28 @@ function ZapsTable({ zaps }: { zaps: Zap[] }) {
                     {zaps.length > 0 ? (
                         zaps.map((zap, index) => (
                             <tr key={index} className="border-b hover:bg-gray-50">
-                                <td className="px-4 py-2">{zap.trigger.type.name}</td>
                                 <td className="px-4 py-2">
-                                    {zap.actions.map(x => x.type.name).join(", ")}
+                                    <div className="flex justify-start">
+                                        <img 
+                                            src={zap.trigger.type.image} 
+                                            alt={zap.trigger.type.name}
+                                            className="w-6 h-6 rounded-full object-cover"
+                                            title={zap.trigger.type.name}
+                                        />
+                                    </div>
+                                </td>
+                                <td className="px-4 py-2">
+                                    <div className="flex gap-3 justify-start">
+                                        {zap.actions.map((action, idx) => (
+                                            <img 
+                                                key={idx}
+                                                src={action.type.image} 
+                                                alt={action.type.name}
+                                                className="w-6 h-6 rounded-full object-cover"
+                                                title={action.type.name}
+                                            />
+                                        ))}
+                                    </div>
                                 </td>
                                 <td className="px-4 py-2">{zap.id}</td>
                                 <td className="px-4 text-right">
