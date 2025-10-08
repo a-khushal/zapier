@@ -31,14 +31,22 @@ export default function Appbar() {
                 Synq
             </h1>
 
-            <nav className="flex gap-6 items-center text-gray-800 text-sm">
+            <nav className="flex gap-4 items-center text-gray-800 text-sm">
                 {isSignedIn ? (
-                    <div
-                        className="bg-gray-200 py-2 px-3 rounded-full hover:cursor-pointer font-semibold"
-                        onClick={handleLogout}
-                    >
-                        Log out
-                    </div>
+                    <>
+                        <div
+                            className="hover:cursor-pointer text-gray-700 hover:text-orange-500 transition-colors font-medium px-3 py-1.5 rounded-md hover:bg-orange-50"
+                            onClick={() => router.push("/dashboard")}
+                        >
+                            Dashboard
+                        </div>
+                        <div
+                            className="bg-gray-200 py-2 px-3 rounded-full hover:cursor-pointer font-semibold hover:bg-gray-300 transition-colors"
+                            onClick={handleLogout}
+                        >
+                            Log out
+                        </div>
+                    </>
                 ) : (
                     <>
                         <div
