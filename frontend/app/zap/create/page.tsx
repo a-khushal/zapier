@@ -17,8 +17,12 @@ import "reactflow/dist/style.css";
 import WorkflowNode from "@/components/WorkflowNode";
 import Modal, { ModalItem } from "@/components/Modal";
 import { useAuth } from "@/hooks/useAuth";
-import { useTriggerAction, TriggerActionRes } from "@/hooks/useTriggerAction";
+import { useTriggerAction, TriggerActionRes as BaseTriggerActionRes } from "@/hooks/useTriggerAction";
 import { useCreateZap } from "@/hooks/useCreateZap";
+
+type TriggerActionRes = BaseTriggerActionRes & {
+  nodeId?: string;
+};
 
 const nodeTypes = { workflowNode: WorkflowNode };
 
@@ -52,7 +56,7 @@ function App() {
     setIsModalOpen(true);
   };
 
-  const handleSelect = (app: TriggerActionRes) => {
+  const handleSelect = (app: BaseTriggerActionRes) => {
     if (!selectedNodeId) {
       return;
     }
@@ -61,14 +65,13 @@ function App() {
       setSelectedTrigger(app);
     } else {
       setSelectedActions(prev => {
-        const newActions = [...prev];
-        const existingIndex = newActions.findIndex(a => a.id === app.id);
+        const existingIndex = prev.findIndex(a => a.nodeId === selectedNodeId);
         if (existingIndex >= 0) {
-          newActions[existingIndex] = app;
-        } else {
-          newActions.push(app);
+          const updated = [...prev];
+          updated[existingIndex] = { ...app, nodeId: selectedNodeId };
+          return updated;
         }
-        return newActions;
+        return [...prev, { ...app, nodeId: selectedNodeId }];
       });
     }
 
@@ -291,6 +294,7 @@ function App() {
         }))
       };
 
+      console.log('Sending zap data:', zapData);
       await createZap(zapData);
       alert('Zap created successfully!');
     } catch (error) {
@@ -347,8 +351,8 @@ function App() {
           onClick={handlePublish}
           disabled={!canPublish || isPublishing}
           className={`px-4 py-2 rounded-full font-medium transition-all ${!canPublish || isPublishing
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-[#ff4f00] hover:bg-[#ff4f00]/90 text-white'
+            ? 'bg-gray-400 cursor-not-allowed'
+            : 'bg-[#ff4f00] hover:bg-[#ff4f00]/90 text-white'
             }`}
         >
           {isPublishing ? 'Publishing...' : 'Publish Zap'}
