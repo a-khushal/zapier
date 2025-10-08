@@ -1,6 +1,6 @@
-# Zapier Clone
+# Synq
 
-A simplified clone of Zapier that allows users to create automated workflows (Zaps) between different applications using triggers and actions.
+A clone of Zapier that allows users to create automated workflows (Zaps) between different applications using triggers and actions.
 
 ## Project Structure
 
