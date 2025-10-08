@@ -55,7 +55,7 @@ function App() {
       type: 'workflowNode',
       position: {
         x: window.innerWidth / 2 - nodeWidth / 2,
-        y: window.innerHeight / 2 - (nodeHeight / 2) * 2,
+        y: window.innerHeight / 2 - (nodeHeight / 2) * 8.32,
       },
       draggable: false,
       data: {
@@ -102,10 +102,15 @@ function App() {
       };
 
       const updatedNodes = [...nds.slice(0, afterNodeIndex + 1), newNode];
-      nodesAfter.forEach((node) => {
+      nodesAfter.forEach((node, idx) => {
+        const nodeIndex = afterNodeIndex + 2 + idx;
         updatedNodes.push({
           ...node,
           position: { ...node.position, y: node.position.y + 170 },
+          data: {
+            ...node.data,
+            subtitle: node.data.subtitle.replace(/^\d+\./, `${nodeIndex + 1}.`)
+          }
         });
       });
 
@@ -164,32 +169,45 @@ function App() {
 
       const updatedNodes = nds.filter((n) => n.id !== nodeId);
 
-      return updatedNodes.map((node, index) => {
-        const subtitleParts = node.data.subtitle?.split('. ') || [];
-        const stepNumber = index + 1;
+      const nodesWithUpdatedPositions = updatedNodes.map((node, idx) => {
+        if (idx === 0) return node;
+        const shouldMoveUp = idx >= nodeIndex;
+
+        return {
+          ...node,
+          position: {
+            ...node.position,
+            y: shouldMoveUp ? node.position.y - 170 : node.position.y
+          }
+        };
+      });
+
+      return nodesWithUpdatedPositions.map((node, idx) => {
+        if (idx === 0) return node;
+        const stepNumber = idx + 1;
+        const newSubtitle = node.data.subtitle.replace(
+          /^\d+\./,
+          `${stepNumber}.`
+        );
 
         return {
           ...node,
           data: {
             ...node.data,
-            subtitle: `${stepNumber}. ${subtitleParts.slice(1).join('. ')}`
-          },
-          position: {
-            x: nds[0]?.position.x || 250,
-            y: 50 + index * 170,
+            subtitle: newSubtitle
           }
         };
       });
     });
 
-    setEdges((eds: Edge[]) => {
-      const incomingEdge = eds.find((e) => e.target === nodeId);
-      const outgoingEdge = eds.find((e) => e.source === nodeId);
+    setEdges((eds) => {
+      const incomingEdge = eds.find(e => e.target === nodeId);
+      const outgoingEdge = eds.find(e => e.source === nodeId);
 
-      const newEdges = eds.filter((e) => e.source !== nodeId && e.target !== nodeId);
+      let newEdges = eds.filter(e => e.source !== nodeId && e.target !== nodeId);
 
       if (incomingEdge && outgoingEdge) {
-        newEdges.push({
+        const connectingEdge = {
           id: `e${incomingEdge.source}-${outgoingEdge.target}`,
           source: incomingEdge.source,
           target: outgoingEdge.target,
@@ -199,7 +217,9 @@ function App() {
             type: MarkerType.ArrowClosed,
             color: '#9ca3af',
           },
-        });
+        };
+
+        return [...newEdges, connectingEdge];
       }
 
       return newEdges;
