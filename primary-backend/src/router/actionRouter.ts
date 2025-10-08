@@ -4,7 +4,7 @@ import { authMiddleWare } from "../middleware";
 
 const router = Router();
 
-router.get("/available", authMiddleWare, async (req, res) => {
+router.get("/available", authMiddleWare, async (_req, res) => {
     const availableActions = await db.availableAction.findMany({});
     res.json({
         availableActions

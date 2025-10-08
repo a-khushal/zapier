@@ -1,6 +1,6 @@
-"use client"
+"use client";
 
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from "react";
 import ReactFlow, {
   Node,
   BackgroundVariant,
@@ -12,47 +12,43 @@ import ReactFlow, {
   useNodesState,
   useEdgesState,
   MarkerType,
-} from 'reactflow';
-import 'reactflow/dist/style.css';
-import WorkflowNode from '@/components/WorkflowNode';
-import Modal, { ModalItem } from '@/components/Modal';
-import { useAuth } from '@/hooks/useAuth';
+} from "reactflow";
+import "reactflow/dist/style.css";
+import WorkflowNode from "@/components/WorkflowNode";
+import Modal, { ModalItem } from "@/components/Modal";
+import { useAuth } from "@/hooks/useAuth";
+import { useTriggerAction, TriggerActionRes } from "@/hooks/useTriggerAction";
 
 const nodeTypes = { workflowNode: WorkflowNode };
 
 const initialEdges: Edge[] = [
   {
-    id: 'e1-2',
-    source: '1',
-    target: '2',
-    type: 'default',
-    style: { stroke: '#9ca3af', strokeWidth: 2 },
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#9ca3af' },
+    id: "e1-2",
+    source: "1",
+    target: "2",
+    type: "default",
+    style: { stroke: "#9ca3af", strokeWidth: 2 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
   },
 ];
 
 function App() {
   useAuth();
+  const { loading, availableTriggers, availableActions } = useTriggerAction();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [nodeIdCounter, setNodeIdCounter] = useState(6);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [modalTitle, setModalTitle] = useState('Select an App');
-
-  const apps = [
-    { id: '1', title: 'Google Calendar', icon: 'https://www.google.com/s2/favicons?sz=64&domain=calendar.google.com' },
-    { id: '2', title: 'Slack', icon: 'https://a.slack-edge.com/80588/marketing/img/icons/icon_slack_hash_colored.png' },
-    { id: '3', title: 'Notion', icon: 'https://www.notion.so/images/favicon.ico' },
-  ];
+  const [modalTitle, setModalTitle] = useState("Select an App");
 
   const handleNodeClick = (nodeId: string) => {
     setSelectedNodeId(nodeId);
-    setModalTitle(nodeId === '1' ? 'Select a Trigger' : 'Select an Action');
+    setModalTitle(nodeId === "1" ? "Select a Trigger" : "Select an Action");
     setIsModalOpen(true);
   };
 
-  const handleSelect = (app: typeof apps[0]) => {
+  const handleSelect = (app: TriggerActionRes) => {
     if (!selectedNodeId) return;
 
     setNodes((nds) =>
@@ -62,15 +58,15 @@ function App() {
             ...node,
             data: {
               ...node.data,
-              icon: app.icon,
-              title: app.title,
+              icon: app.image,
+              title: app.name,
             },
           }
           : node
       )
     );
 
-    setModalTitle(app.title);
+    setModalTitle(app.name);
     setIsModalOpen(false);
   };
 
@@ -83,17 +79,17 @@ function App() {
     const nodeWidth = 250;
     const nodeHeight = 100;
     const centerNode: Node = {
-      id: '1',
-      type: 'workflowNode',
+      id: "1",
+      type: "workflowNode",
       position: {
         x: window.innerWidth / 2 - nodeWidth / 2,
         y: window.innerHeight / 2 - (nodeHeight / 2) * 8.32,
       },
       data: {
-        icon: 'trigger',
-        title: 'Trigger',
-        subtitle: '1. Select the trigger for your Zap to run',
-        type: 'trigger',
+        icon: "trigger",
+        title: "Trigger",
+        subtitle: "1. Select the trigger for your Zap to run",
+        type: "trigger",
         onAddNode: null,
         onDeleteNode: null,
         isWorkflowRoot: true,
@@ -102,54 +98,84 @@ function App() {
     setNodes([centerNode]);
   }, []);
 
-  const addNodeAfter = useCallback((afterNodeId: string) => {
-    setNodes((nds: Node[]) => {
-      const afterNode = nds.find((n) => n.id === afterNodeId);
-      if (!afterNode) return nds;
-      const afterNodeIndex = nds.findIndex((n) => n.id === afterNodeId);
-      const nodesAfter = nds.slice(afterNodeIndex + 1);
-      const newNodeId = `${nodeIdCounter}`;
-      setNodeIdCounter((c) => c + 1);
-      const newNode: Node = {
-        id: newNodeId,
-        type: 'workflowNode',
-        position: { x: afterNode.position.x, y: afterNode.position.y + 170 },
-        data: {
-          icon: 'action',
-          title: 'Action',
-          subtitle: `${afterNodeIndex + 2}. Select the event for your Zap to run`,
-          type: 'action',
-          onAddNode: addNodeAfter,
-          onDeleteNode: deleteNode,
-        },
-      };
-      const updatedNodes = [...nds.slice(0, afterNodeIndex + 1), newNode];
-      nodesAfter.forEach((node, idx) => {
-        const nodeIndex = afterNodeIndex + 2 + idx;
-        updatedNodes.push({
-          ...node,
-          position: { ...node.position, y: node.position.y + 170 },
-          data: { ...node.data, subtitle: node.data.subtitle.replace(/^\d+\./, `${nodeIndex + 1}.`) },
+  const addNodeAfter = useCallback(
+    (afterNodeId: string) => {
+      setNodes((nds: Node[]) => {
+        const afterNode = nds.find((n) => n.id === afterNodeId);
+        if (!afterNode) return nds;
+        const afterNodeIndex = nds.findIndex((n) => n.id === afterNodeId);
+        const nodesAfter = nds.slice(afterNodeIndex + 1);
+        const newNodeId = `${nodeIdCounter}`;
+        setNodeIdCounter((c) => c + 1);
+        const newNode: Node = {
+          id: newNodeId,
+          type: "workflowNode",
+          position: { x: afterNode.position.x, y: afterNode.position.y + 170 },
+          data: {
+            icon: "action",
+            title: "Action",
+            subtitle: `${afterNodeIndex + 2}. Select the event for your Zap to run`,
+            type: "action",
+            onAddNode: addNodeAfter,
+            onDeleteNode: deleteNode,
+          },
+        };
+        const updatedNodes = [...nds.slice(0, afterNodeIndex + 1), newNode];
+        nodesAfter.forEach((node, idx) => {
+          const nodeIndex = afterNodeIndex + 2 + idx;
+          updatedNodes.push({
+            ...node,
+            position: { ...node.position, y: node.position.y + 170 },
+            data: {
+              ...node.data,
+              subtitle: node.data.subtitle.replace(/^\d+\./, `${nodeIndex + 1}.`),
+            },
+          });
         });
+        return updatedNodes;
       });
-      return updatedNodes;
-    });
 
-    setEdges((eds: Edge[]) => {
-      const edgeToRemove = eds.find((e) => e.source === afterNodeId);
-      const newNodeId = `${nodeIdCounter}`;
-      if (edgeToRemove) {
-        const newEdges = eds.filter((e) => e.source !== afterNodeId);
-        newEdges.push(
-          { id: `e${afterNodeId}-${newNodeId}`, source: afterNodeId, target: newNodeId, type: 'default', style: { stroke: '#9ca3af', strokeWidth: 2 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#9ca3af' } },
-          { id: `e${newNodeId}-${edgeToRemove.target}`, source: newNodeId, target: edgeToRemove.target, type: 'default', style: { stroke: '#9ca3af', strokeWidth: 2 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#9ca3af' } }
-        );
-        return newEdges;
-      } else {
-        return [...eds, { id: `e${afterNodeId}-${newNodeId}`, source: afterNodeId, target: newNodeId, type: 'default', style: { stroke: '#9ca3af', strokeWidth: 2 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#9ca3af' } }];
-      }
-    });
-  }, [nodeIdCounter, setNodes, setEdges]);
+      setEdges((eds: Edge[]) => {
+        const edgeToRemove = eds.find((e) => e.source === afterNodeId);
+        const newNodeId = `${nodeIdCounter}`;
+        if (edgeToRemove) {
+          const newEdges = eds.filter((e) => e.source !== afterNodeId);
+          newEdges.push(
+            {
+              id: `e${afterNodeId}-${newNodeId}`,
+              source: afterNodeId,
+              target: newNodeId,
+              type: "default",
+              style: { stroke: "#9ca3af", strokeWidth: 2 },
+              markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
+            },
+            {
+              id: `e${newNodeId}-${edgeToRemove.target}`,
+              source: newNodeId,
+              target: edgeToRemove.target,
+              type: "default",
+              style: { stroke: "#9ca3af", strokeWidth: 2 },
+              markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
+            }
+          );
+          return newEdges;
+        } else {
+          return [
+            ...eds,
+            {
+              id: `e${afterNodeId}-${newNodeId}`,
+              source: afterNodeId,
+              target: newNodeId,
+              type: "default",
+              style: { stroke: "#9ca3af", strokeWidth: 2 },
+              markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
+            },
+          ];
+        }
+      });
+    },
+    [nodeIdCounter, setNodes, setEdges]
+  );
 
   const deleteNode = useCallback((nodeId: string) => {
     setNodes((nds: Node[]) => {
@@ -159,12 +185,24 @@ function App() {
       const nodesWithUpdatedPositions = updatedNodes.map((node, idx) => {
         if (idx === 0) return node;
         const shouldMoveUp = idx >= nodeIndex;
-        return { ...node, position: { ...node.position, y: shouldMoveUp ? node.position.y - 170 : node.position.y } };
+        return {
+          ...node,
+          position: {
+            ...node.position,
+            y: shouldMoveUp ? node.position.y - 170 : node.position.y,
+          },
+        };
       });
       return nodesWithUpdatedPositions.map((node, idx) => {
         if (idx === 0) return node;
         const stepNumber = idx + 1;
-        return { ...node, data: { ...node.data, subtitle: node.data.subtitle.replace(/^\d+\./, `${stepNumber}.`) } };
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            subtitle: node.data.subtitle.replace(/^\d+\./, `${stepNumber}.`),
+          },
+        };
       });
     });
 
@@ -173,7 +211,14 @@ function App() {
       const outgoingEdge = eds.find((e) => e.source === nodeId);
       let newEdges = eds.filter((e) => e.source !== nodeId && e.target !== nodeId);
       if (incomingEdge && outgoingEdge) {
-        const connectingEdge = { id: `e${incomingEdge.source}-${outgoingEdge.target}`, source: incomingEdge.source, target: outgoingEdge.target, type: 'default', style: { stroke: '#9ca3af', strokeWidth: 2 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#9ca3af' } };
+        const connectingEdge = {
+          id: `e${incomingEdge.source}-${outgoingEdge.target}`,
+          source: incomingEdge.source,
+          target: outgoingEdge.target,
+          type: "default",
+          style: { stroke: "#9ca3af", strokeWidth: 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
+        };
         return [...newEdges, connectingEdge];
       }
       return newEdges;
@@ -183,21 +228,32 @@ function App() {
   const nodesWithCallbacks = nodes.map((node) => ({
     ...node,
     position: { ...node.position },
-    data: { 
-      ...node.data, 
-      onAddNode: addNodeAfter, 
-      onDeleteNode: deleteNode, 
+    data: {
+      ...node.data,
+      onAddNode: addNodeAfter,
+      onDeleteNode: deleteNode,
       onDeleteClick: (nodeId: string) => {
         deleteNode(nodeId);
       },
       onClick: handleNodeClick,
-      isSelected: node.id === selectedNodeId
+      isSelected: node.id === selectedNodeId,
     },
-    selected: node.id === selectedNodeId
+    selected: node.id === selectedNodeId,
   }));
 
+  const items =
+    selectedNodeId === "1" ? availableTriggers : availableActions;
+
   return (
-    <div style={{ width: '100vw', height: '100vh', backgroundColor: '#f0f0f0', position: 'relative', overflow: 'hidden' }}>
+    <div
+      style={{
+        width: "100vw",
+        height: "100vh",
+        backgroundColor: "#f0f0f0",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
       <ReactFlow
         nodes={nodesWithCallbacks}
         edges={edges}
@@ -224,8 +280,13 @@ function App() {
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={modalTitle}>
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {apps.map((app) => (
-              <ModalItem key={app.id} title={app.title} icon={app.icon} onClick={() => handleSelect(app)} />
+            {items?.map((app) => (
+              <ModalItem
+                key={app.id}
+                title={app.name}
+                icon={app.image}
+                onClick={() => handleSelect(app)}
+              />
             ))}
           </div>
         </div>
