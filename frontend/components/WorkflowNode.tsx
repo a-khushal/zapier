@@ -1,40 +1,48 @@
 import React, { useState } from 'react';
-import { Handle, Position } from 'reactflow';
 import { Clock, MoreVertical, AlertCircle, Zap, Trash2, Bolt } from 'lucide-react';
+
+interface WorkflowNodeData {
+    icon: string;
+    title: string;
+    subtitle: string;
+    badge?: string;
+    type: string;
+    onAddNode?: (nodeId: string) => void;
+    onDeleteNode?: (nodeId: string) => void;
+    onDeleteClick?: (nodeId: string) => void;
+    onClick?: (nodeId: string) => void;
+    isSelected?: boolean;
+}
 
 interface WorkflowNodeProps {
     id: string;
-    data: {
-        icon: string;
-        title: string;
-        subtitle: string;
-        badge?: string;
-        type: string;
-        onAddNode?: (nodeId: string) => void;
-        onDeleteNode?: (nodeId: string) => void;
-    };
-    draggable?: boolean;
+    data: WorkflowNodeData;
 }
 
-const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data, draggable = false }) => {
+const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data }) => {
     const [showMenu, setShowMenu] = useState(false);
     const isAction = data.type === 'action';
     const isTrigger = data.type === 'trigger';
 
-    const handleMouseDown = isTrigger 
+    const handleMouseDown = isTrigger
         ? (e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
-          }
+        }
         : undefined;
 
     return (
         <div className="relative">
             <div
                 onMouseDown={handleMouseDown}
-                className={`bg-white rounded-lg shadow-md border-2 w-70 transition-all ${
-                    isAction ? 'border-dashed border-gray-300' : 'border-gray-200'
-                } cursor-pointer`}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    if (data.onClick) {
+                        data.onClick(id);
+                    }
+                }}
+                className={`bg-white rounded-lg shadow-md border-2 w-70 transition-all ${isAction ? 'border-dashed border-gray-300' : 'border-gray-200'
+                    } cursor-pointer hover:border-blue-400 min-h-[80px]`}
             >
                 <div className="py-2 px-4">
                     <div className="flex items-start justify-between mb-2">
@@ -52,7 +60,13 @@ const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data, draggable = false
                             ) : (
                                 <div className="flex items-center gap-2">
                                     <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
-                                        {isTrigger ? <Bolt className="w-4 h-4 text-orange-500" /> : <Zap className="w-4 h-4 text-orange-500" />}
+                                        {data.icon.startsWith('http') ? (
+                                            <img src={data.icon} alt={data.title} className="w-5 h-5 rounded-full object-contain" />
+                                        ) : isTrigger ? (
+                                            <Bolt className="w-4 h-4 text-orange-500" />
+                                        ) : (
+                                            <Zap className="w-4 h-4 text-orange-500" />
+                                        )}
                                     </div>
                                     <span className="font-medium text-gray-900">{data.title}</span>
                                 </div>
@@ -67,15 +81,19 @@ const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data, draggable = false
                         <div className="relative">
                             {!isTrigger && <button
                                 className="text-gray-400 hover:text-gray-600"
-                                onClick={() => setShowMenu(!showMenu)}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowMenu(!showMenu);
+                                }}
                             >
                                 <MoreVertical className="w-5 h-5" />
                             </button>}
                             {!isTrigger && showMenu && (
                                 <div className="absolute right-0 mt-2 w-40 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
                                     <button
-                                        onClick={() => {
-                                            data.onDeleteNode?.(id);
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            data.onDeleteClick?.(id);
                                             setShowMenu(false);
                                         }}
                                         className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
@@ -88,7 +106,7 @@ const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, data, draggable = false
                         </div>
                     </div>
 
-                    <div className="text-sm text-gray-600 pl-0">
+                    <div className="text-sm text-gray-600 pl-0 min-h-[20px]">
                         {data.subtitle}
                     </div>
                 </div>
