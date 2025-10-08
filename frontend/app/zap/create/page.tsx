@@ -18,6 +18,7 @@ import WorkflowNode from "@/components/WorkflowNode";
 import Modal, { ModalItem } from "@/components/Modal";
 import { useAuth } from "@/hooks/useAuth";
 import { useTriggerAction, TriggerActionRes } from "@/hooks/useTriggerAction";
+import { useCreateZap } from "@/hooks/useCreateZap";
 
 const nodeTypes = { workflowNode: WorkflowNode };
 
@@ -35,12 +36,15 @@ const initialEdges: Edge[] = [
 function App() {
   useAuth();
   const { loading, availableTriggers, availableActions } = useTriggerAction();
+  const { createZap, isLoading: isPublishing } = useCreateZap();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [nodeIdCounter, setNodeIdCounter] = useState(6);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [modalTitle, setModalTitle] = useState("Select an App");
+  const [selectedTrigger, setSelectedTrigger] = useState<TriggerActionRes | null>(null);
+  const [selectedActions, setSelectedActions] = useState<TriggerActionRes[]>([]);
 
   const handleNodeClick = (nodeId: string) => {
     setSelectedNodeId(nodeId);
@@ -49,7 +53,24 @@ function App() {
   };
 
   const handleSelect = (app: TriggerActionRes) => {
-    if (!selectedNodeId) return;
+    if (!selectedNodeId) {
+      return;
+    }
+
+    if (selectedNodeId === '1') {
+      setSelectedTrigger(app);
+    } else {
+      setSelectedActions(prev => {
+        const newActions = [...prev];
+        const existingIndex = newActions.findIndex(a => a.id === app.id);
+        if (existingIndex >= 0) {
+          newActions[existingIndex] = app;
+        } else {
+          newActions.push(app);
+        }
+        return newActions;
+      });
+    }
 
     setNodes((nds) =>
       nds.map((node) =>
@@ -60,6 +81,7 @@ function App() {
               ...node.data,
               icon: app.image,
               title: app.name,
+              appId: app.id,
             },
           }
           : node
@@ -102,7 +124,10 @@ function App() {
     (afterNodeId: string) => {
       setNodes((nds: Node[]) => {
         const afterNode = nds.find((n) => n.id === afterNodeId);
-        if (!afterNode) return nds;
+        if (!afterNode) {
+          return nds;
+        }
+
         const afterNodeIndex = nds.findIndex((n) => n.id === afterNodeId);
         const nodesAfter = nds.slice(afterNodeIndex + 1);
         const newNodeId = `${nodeIdCounter}`;
@@ -241,8 +266,48 @@ function App() {
     selected: node.id === selectedNodeId,
   }));
 
-  const items =
-    selectedNodeId === "1" ? availableTriggers : availableActions;
+  const items = selectedNodeId === "1" ? availableTriggers : availableActions;
+
+  const handlePublish = async () => {
+    if (!selectedTrigger) {
+      alert('Please select a trigger first');
+      return;
+    }
+
+    if (selectedActions.length === 0) {
+      alert('Please add at least one action');
+      return;
+    }
+
+    if (!confirm('Are you sure you want to publish this Zap?')) {
+      return;
+    }
+
+    try {
+      const zapData = {
+        availableTriggerId: selectedTrigger.id,
+        actions: selectedActions.map(action => ({
+          availableActionId: action.id
+        }))
+      };
+
+      await createZap(zapData);
+      alert('Zap created successfully!');
+    } catch (error) {
+      console.error('Failed to create Zap:', error);
+      alert('Failed to create Zap. Please try again.');
+    }
+  };
+
+  const allNodesHaveApps = nodes.every(node => {
+    if (node.id === '1') {
+      return !!selectedTrigger;
+    }
+
+    return selectedActions.some(action => node.data.appId === action.id);
+  });
+
+  const canPublish = selectedTrigger && selectedActions.length > 0 && allNodesHaveApps;
 
   return (
     <div
@@ -277,7 +342,20 @@ function App() {
         <Controls />
       </ReactFlow>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={modalTitle}>
+      <div className="fixed right-10 z-50" style={{ top: 'calc(1rem + 28px + 2px + 2rem)' }}>
+        <button
+          onClick={handlePublish}
+          disabled={!canPublish || isPublishing}
+          className={`px-4 py-2 rounded-full font-medium transition-all ${!canPublish || isPublishing
+              ? 'bg-gray-400 cursor-not-allowed'
+              : 'bg-[#ff4f00] hover:bg-[#ff4f00]/90 text-white'
+            }`}
+        >
+          {isPublishing ? 'Publishing...' : 'Publish Zap'}
+        </button>
+      </div>
+
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={modalTitle} loading={loading}>
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {items?.map((app) => (
