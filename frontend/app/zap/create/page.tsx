@@ -188,9 +188,7 @@ function App() {
       onAddNode: addNodeAfter, 
       onDeleteNode: deleteNode, 
       onDeleteClick: (nodeId: string) => {
-        setSelectedNodeId(nodeId);
-        setModalTitle('Confirm Deletion');
-        setIsModalOpen(true);
+        deleteNode(nodeId);
       },
       onClick: handleNodeClick,
       isSelected: node.id === selectedNodeId
