@@ -8,9 +8,9 @@ datasource db {
 }
 
 model User {
-  id       String    @id @default(uuid())
+  id       String @id @default(uuid())
   name     String
-  email    String    @unique
+  email    String @unique
   password String
   zaps     Zap[]
 }
@@ -23,6 +23,8 @@ model Zap {
   actions   Action[]
   zapRuns   ZapRun[]
   user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Trigger {

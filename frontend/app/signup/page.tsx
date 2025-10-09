@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Check, Eye, EyeOff } from 'lucide-react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
+import { BACKEND_URL } from '@/config';
 
 function App() {
   const router = useRouter()
@@ -17,7 +18,7 @@ function App() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     console.log('Form submitted:', formData);
-    await axios.post("http://localhost:8080/api/v1/user/signup", formData);
+    await axios.post(`${BACKEND_URL}/api/v1/user/signup`, formData);
     router.push("/login")
   };
 

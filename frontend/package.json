@@ -9,7 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.7.9",
+    "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.475.0",
     "next": "15.1.7",
     "react": "^19.0.0",

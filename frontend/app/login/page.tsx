@@ -4,6 +4,7 @@ import axios from "axios";
 import { ArrowRight, Eye, EyeOff } from "lucide-react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
+import { BACKEND_URL } from "@/config";
 
 export default function Login() {
   const router = useRouter();
@@ -19,7 +20,7 @@ export default function Login() {
     setError(null);
 
     try {
-      const response = await axios.post("http://localhost:8080/api/v1/user/signin", formData);
+      const response = await axios.post(`${BACKEND_URL}/api/v1/user/signin`, formData);
       localStorage.setItem("token", "Bearer " + response.data.token);
       router.push("/dashboard");
     } catch (err: any) {

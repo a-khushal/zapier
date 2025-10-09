@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { useAuth } from "./useAuth";
+import { BACKEND_URL } from "@/config";
 
 export interface TriggerActionRes {
     id: string;
@@ -23,10 +24,10 @@ export function useTriggerAction() {
 
             try {
                 const [triggerRes, actionRes] = await Promise.all([
-                    axios.get("http://localhost:8080/api/v1/trigger/available", {
+                    axios.get(`${BACKEND_URL}/api/v1/trigger/available`, {
                         headers: { Authorization: token },
                     }),
-                    axios.get("http://localhost:8080/api/v1/action/available", {
+                    axios.get(`${BACKEND_URL}/api/v1/action/available`, {
                         headers: { Authorization: token },
                     }),
                 ]);

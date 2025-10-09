@@ -2,6 +2,7 @@ import { useState } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { CreateZapRequest, CreateZapResponse } from '@/types/zap';
+import { BACKEND_URL } from '@/config';
 
 export function useCreateZap() {
   const [isLoading, setIsLoading] = useState(false);
@@ -19,7 +20,7 @@ export function useCreateZap() {
       }
 
       const response = await axios.post<CreateZapResponse>(
-        'http://localhost:8080/api/v1/zap',
+        `${BACKEND_URL}/api/v1/zap`,
         zapData,
         {
           headers: {

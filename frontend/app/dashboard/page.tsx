@@ -5,6 +5,8 @@ import { ChevronRight, PlusIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { BACKEND_URL, WEBHOOK_URL } from "@/config";
+import { useUserId } from "@/hooks/useUserId";
 
 type TriggerType = {
     id: string;
@@ -54,7 +56,7 @@ function useZaps() {
                     return;
                 }
 
-                const response = await axios.get("http://localhost:8080/api/v1/zap", {
+                const response = await axios.get(`${BACKEND_URL}/api/v1/zap`, {
                     headers: {
                         Authorization: localStorage.getItem("token") as string
                     }
@@ -80,7 +82,7 @@ export default function Dashboard() {
 
     return (
         <div className="mt-10 lg:mt-14 flex justify-center">
-            <div className="w-full max-w-5xl bg-white shadow-lg rounded-lg p-6">
+            <div className="w-full max-w-7xl bg-white shadow-lg rounded-lg p-6">
                 <div className="flex justify-between items-center mb-4">
                     <h2 className="font-semibold text-2xl text-gray-800">My Zaps</h2>
                     <button className="flex items-center text-white bg-blue-600 px-4 py-2 rounded-md hover:bg-blue-700" onClick={() => {
@@ -102,6 +104,8 @@ export default function Dashboard() {
 
 function ZapsTable({ zaps }: { zaps: Zap[] }) {
     const router = useRouter();
+    const userId = useUserId();
+
     return (
         <div className="overflow-x-auto">
             <table className="w-full border-collapse bg-white text-left text-sm text-gray-600">
@@ -110,6 +114,8 @@ function ZapsTable({ zaps }: { zaps: Zap[] }) {
                         <th className="px-4 py-3">Trigger</th>
                         <th className="px-4 py-3">Actions</th>
                         <th className="px-4 py-3">ZapId</th>
+                        <th className="px-4 py-3">Webhook URL</th>
+                        <th className="px-4 py-3">Created at</th>
                         <th className="px-4 py-3 text-right"></th>
                     </tr>
                 </thead>
@@ -119,8 +125,8 @@ function ZapsTable({ zaps }: { zaps: Zap[] }) {
                             <tr key={index} className="border-b hover:bg-gray-50">
                                 <td className="px-4 py-2">
                                     <div className="flex justify-start">
-                                        <img 
-                                            src={zap.trigger.type.image} 
+                                        <img
+                                            src={zap.trigger.type.image}
                                             alt={zap.trigger.type.name}
                                             className="w-6 h-6 rounded-full object-cover"
                                             title={zap.trigger.type.name}
@@ -130,9 +136,9 @@ function ZapsTable({ zaps }: { zaps: Zap[] }) {
                                 <td className="px-4 py-2">
                                     <div className="flex gap-3 justify-start">
                                         {zap.actions.map((action, idx) => (
-                                            <img 
+                                            <img
                                                 key={idx}
-                                                src={action.type.image} 
+                                                src={action.type.image}
                                                 alt={action.type.name}
                                                 className="w-6 h-6 rounded-full object-cover"
                                                 title={action.type.name}
@@ -141,6 +147,10 @@ function ZapsTable({ zaps }: { zaps: Zap[] }) {
                                     </div>
                                 </td>
                                 <td className="px-4 py-2">{zap.id}</td>
+                                <td className="px-4 py-2 max-w-xs break-all">
+                                    {`${WEBHOOK_URL}/catch/${userId}/${zap.id}`}
+                                </td>
+                                <td className="px-4 py-2">9th Oct 2025</td>
                                 <td className="px-4 text-right">
                                     <div
                                         className="hover:text-blue-600 hover:cursor-pointer border border-gray-400 rounded-xl flex justify-center items-center"
@@ -148,7 +158,7 @@ function ZapsTable({ zaps }: { zaps: Zap[] }) {
                                             router.push(`/zap/${zap.id}`)
                                         }}
                                     >
-                                        <ChevronRight className="w-6 h-6"/>
+                                        <ChevronRight className="w-6 h-6" />
                                     </div>
                                 </td>
                             </tr>
