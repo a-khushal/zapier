@@ -1,8 +1,8 @@
 import dotenv from "dotenv";
-dotenv.config({ path: "./.env" });
+dotenv.config({ path: "./.env", quiet: true });
 
 import { PrismaClient } from "@prisma/client"
-import { Kafka } from "kafkajs"
+import { Kafka, Partitioners } from "kafkajs"
 
 
 const TOPIC_NAME = "zap-events"
@@ -15,7 +15,9 @@ const kafka = new Kafka({
 const client = new PrismaClient()
 
 async function main() {
-  const procuder = kafka.producer();
+  const procuder = kafka.producer({
+    createPartitioner: Partitioners.LegacyPartitioner
+  });
   await procuder.connect()
 
   while (1) {
@@ -42,4 +44,3 @@ async function main() {
 }
 
 main()
-
