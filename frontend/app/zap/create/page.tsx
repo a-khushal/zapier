@@ -22,6 +22,7 @@ import { useCreateZap } from "@/hooks/useCreateZap";
 
 type TriggerActionRes = BaseTriggerActionRes & {
   nodeId?: string;
+  actionMetadata?: Record<string, unknown>;
 };
 
 const nodeTypes = { workflowNode: WorkflowNode };
@@ -64,14 +65,26 @@ function App() {
     if (selectedNodeId === '1') {
       setSelectedTrigger(app);
     } else {
+      let actionMetadata: Record<string, unknown> | undefined = undefined;
+
+      if (app.id === "post_webhook") {
+        const url = window.prompt("Enter destination webhook URL");
+        if (!url || !url.trim()) {
+          alert("Webhook URL is required for POST webhook action");
+          return;
+        }
+        actionMetadata = { url: url.trim() };
+      }
+
       setSelectedActions(prev => {
+        const nextAction = { ...app, nodeId: selectedNodeId, actionMetadata };
         const existingIndex = prev.findIndex(a => a.nodeId === selectedNodeId);
         if (existingIndex >= 0) {
           const updated = [...prev];
-          updated[existingIndex] = { ...app, nodeId: selectedNodeId };
+          updated[existingIndex] = nextAction;
           return updated;
         }
-        return [...prev, { ...app, nodeId: selectedNodeId }];
+        return [...prev, nextAction];
       });
     }
 
@@ -287,14 +300,17 @@ function App() {
     }
 
     try {
+      const orderedActions = [...selectedActions].sort((a, b) => {
+        return Number(a.nodeId || "0") - Number(b.nodeId || "0");
+      });
+
       const zapData = {
         availableTriggerId: selectedTrigger.id,
-        actions: selectedActions.map(action => ({
-          availableActionId: action.id
+        actions: orderedActions.map(action => ({
+          availableActionId: action.id,
+          actionMetadata: action.actionMetadata
         }))
       };
-
-      console.log('Sending zap data:', zapData);
       await createZap(zapData);
       alert('Zap created successfully!');
     } catch (error) {

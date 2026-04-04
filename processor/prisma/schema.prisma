@@ -44,6 +44,7 @@ model Action {
   metadata     Json            @default("{}")
   type         AvailableAction @relation(fields: [actionId], references: [id])
   sortingOrder Int             @default(0)
+  zapRunSteps  ZapRunStep[]
 }
 
 model AvailableAction {
@@ -61,15 +62,38 @@ model AvailableTrigger {
 }
 
 model ZapRun {
-  id           String        @id @default(uuid())
-  zapId        String
-  metadata     Json
-  zap          Zap           @relation(fields: [zapId], references: [id])
-  zapRunOutbox ZapRunOutbox?
+  id             String         @id @default(uuid())
+  zapId          String
+  metadata       Json
+  zap            Zap            @relation(fields: [zapId], references: [id])
+  zapRunOutbox    ZapRunOutbox?
+  zapRunSteps     ZapRunStep[]
 }
 
 model ZapRunOutbox {
   id       String @id @default(uuid())
   zapRunId String @unique
   zapRun   ZapRun @relation(fields: [zapRunId], references: [id])
+}
+
+enum ZapRunStepStatus {
+  SUCCESS
+  FAILED
+}
+
+model ZapRunStep {
+  id          String           @id @default(uuid())
+  zapRunId    String
+  actionId    String
+  status      ZapRunStepStatus
+  input       Json?
+  output      Json?
+  error       String?
+  startedAt   DateTime         @default(now())
+  completedAt DateTime?
+  action      Action           @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  zapRun      ZapRun           @relation(fields: [zapRunId], references: [id], onDelete: Cascade)
+
+  @@index([zapRunId])
+  @@index([actionId])
 }

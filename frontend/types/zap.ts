@@ -2,6 +2,7 @@ export interface CreateZapRequest {
   availableTriggerId: string;
   actions: {
     availableActionId: string;
+    actionMetadata?: Record<string, unknown>;
   }[];
 }
 
