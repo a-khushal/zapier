@@ -41,6 +41,8 @@ interface Zap {
     userId: string;
     trigger: Trigger;
     actions: Action[];
+    createdAt: Date;
+    updatedAt: Date;
 }
 
 function useZaps() {
@@ -150,7 +152,16 @@ function ZapsTable({ zaps }: { zaps: Zap[] }) {
                                 <td className="px-4 py-2 max-w-xs break-all">
                                     {`${WEBHOOK_URL}/catch/${userId}/${zap.id}`}
                                 </td>
-                                <td className="px-4 py-2">9th Oct 2025</td>
+                                <td className="px-4 py-2">
+                                    {new Date(zap.createdAt).toLocaleString("en-GB", {
+                                        day: "2-digit",
+                                        month: "short",
+                                        year: "numeric",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                        second: "2-digit",
+                                    })}
+                                </td>
                                 <td className="px-4 text-right">
                                     <div
                                         className="hover:text-blue-600 hover:cursor-pointer border border-gray-400 rounded-xl flex justify-center items-center"
