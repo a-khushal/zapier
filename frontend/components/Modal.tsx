@@ -21,10 +21,10 @@ export const ModalItem: React.FC<ModalItemProps> = ({ title, icon, onClick }) =>
     return (
         <button
             onClick={onClick}
-            className="flex items-center gap-3 p-2 rounded-md hover:bg-gray-100 transition-colors w-full text-left"
+            className="flex w-full items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 text-left transition-colors hover:border-gray-300 hover:bg-gray-50"
         >
-            <img src={icon} alt={title} className="w-8 h-8 rounded-md" />
-            <span className="text-gray-900 font-medium">{title}</span>
+            <img src={icon} alt={title} className="h-8 w-8 rounded-md object-cover" />
+            <span className="text-sm font-medium text-gray-900">{title}</span>
         </button>
     );
 };
@@ -57,18 +57,18 @@ const Modal: React.FC<ModalProps> = ({
             {loading ? (
                 <Loader2 className="w-8 h-8 text-white animate-spin" />
             ) : (
-                <div className="bg-gray-50 rounded-lg shadow-xl w-[500px] max-w-[calc(100%-32px)] max-h-[80vh] overflow-hidden flex flex-col">
+                <div className="flex max-h-[80vh] w-[520px] max-w-[calc(100%-32px)] flex-col overflow-hidden rounded-xl bg-white shadow-xl">
                     <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                         <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
                         <button
                             onClick={onClose}
-                            className="text-gray-400 hover:text-gray-500 transition-colors"
+                            className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-500"
                             aria-label="Close"
                         >
                             <X className="w-5 h-5" />
                         </button>
                     </div>
-                    <div className="p-4 overflow-y-auto flex-1 space-y-2">{children}</div>
+                    <div className="flex-1 space-y-2 overflow-y-auto bg-gray-50 p-4">{children}</div>
                 </div>
             )}
         </div>

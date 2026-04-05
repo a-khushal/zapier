@@ -12,7 +12,6 @@ import ReactFlow, {
   Connection,
   useNodesState,
   useEdgesState,
-  MarkerType,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import WorkflowNode from "@/components/WorkflowNode";
@@ -35,6 +34,93 @@ type ActionTestResult = {
   error?: string;
 };
 
+type PostWebhookHeader = {
+  key: string;
+  value: string;
+};
+
+type PostWebhookMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+type PostWebhookAuth =
+  | { type: "none" }
+  | { type: "api_key"; key: string; value: string; addTo: "header" | "query" };
+
+type PostWebhookMetadata = {
+  url: string;
+  method: PostWebhookMethod;
+  headers: PostWebhookHeader[];
+  bodyTemplate?: string;
+  timeoutMs?: number;
+  auth: PostWebhookAuth;
+};
+
+const ALLOWED_METHODS: PostWebhookMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+
+function isValidHttpUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function getDefaultPostWebhookMetadata(): PostWebhookMetadata {
+  return {
+    url: "",
+    method: "POST",
+    headers: [],
+    bodyTemplate: "",
+    timeoutMs: undefined,
+    auth: { type: "none" },
+  };
+}
+
+function getPostWebhookMetadata(
+  actionMetadata: Record<string, unknown> | undefined
+): PostWebhookMetadata {
+  const base = getDefaultPostWebhookMetadata();
+  if (!actionMetadata || typeof actionMetadata !== "object") {
+    return base;
+  }
+
+  const raw = actionMetadata as any;
+  const method = ALLOWED_METHODS.includes(raw.method) ? raw.method : "POST";
+  const headers: PostWebhookHeader[] = Array.isArray(raw.headers)
+    ? raw.headers.map((header: any) => ({
+      key: String(header?.key || ""),
+      value: String(header?.value || ""),
+    }))
+    : [];
+  const timeoutMs =
+    typeof raw.timeoutMs === "number" && Number.isFinite(raw.timeoutMs)
+      ? Math.floor(raw.timeoutMs)
+      : undefined;
+
+  let auth: PostWebhookAuth = { type: "none" };
+  if (
+    raw.auth &&
+    typeof raw.auth === "object" &&
+    raw.auth.type === "api_key"
+  ) {
+    auth = {
+      type: "api_key",
+      key: String(raw.auth.key || ""),
+      value: String(raw.auth.value || ""),
+      addTo: raw.auth.addTo === "query" ? "query" : "header",
+    };
+  }
+
+  return {
+    url: typeof raw.url === "string" ? raw.url : base.url,
+    method,
+    headers,
+    bodyTemplate: typeof raw.bodyTemplate === "string" ? raw.bodyTemplate : base.bodyTemplate,
+    timeoutMs,
+    auth,
+  };
+}
+
 const nodeTypes = { workflowNode: WorkflowNode };
 
 const initialEdges: Edge[] = [
@@ -43,8 +129,9 @@ const initialEdges: Edge[] = [
     source: "1",
     target: "2",
     type: "default",
-    style: { stroke: "#9ca3af", strokeWidth: 2 },
-    markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
+    style: { stroke: "#d1d5db", strokeWidth: 1.2 },
+    markerEnd: undefined,
+    markerStart: undefined,
   },
 ];
 
@@ -61,10 +148,27 @@ function App() {
   const [selectedTrigger, setSelectedTrigger] = useState<TriggerActionRes | null>(null);
   const [selectedActions, setSelectedActions] = useState<TriggerActionRes[]>([]);
   const [actionTestResults, setActionTestResults] = useState<Record<string, ActionTestResult>>({});
+  const [isActionConfigOpen, setIsActionConfigOpen] = useState(false);
 
   const handleNodeClick = (nodeId: string) => {
     setSelectedNodeId(nodeId);
-    setModalTitle(nodeId === "1" ? "Select a Trigger" : "Select an Action");
+
+    if (nodeId === "1") {
+      setModalTitle("Select a Trigger");
+      setIsActionConfigOpen(false);
+      setIsModalOpen(true);
+      return;
+    }
+
+    const existingAction = selectedActions.find((action) => action.nodeId === nodeId);
+    if (existingAction?.id === "post_webhook") {
+      setIsModalOpen(false);
+      setIsActionConfigOpen(true);
+      return;
+    }
+
+    setModalTitle("Select an Action");
+    setIsActionConfigOpen(false);
     setIsModalOpen(true);
   };
 
@@ -79,96 +183,10 @@ function App() {
       let actionMetadata: Record<string, unknown> | undefined = undefined;
 
       if (app.id === "post_webhook") {
-        const url = window.prompt("Enter destination webhook URL");
-        if (!url || !url.trim()) {
-          alert("Webhook URL is required for POST webhook action");
-          return;
-        }
-
-        const methodInput = window.prompt(
-          "HTTP method? (GET, POST, PUT, PATCH, DELETE)",
-          "POST"
+        const existing = selectedActions.find(
+          (action) => action.nodeId === selectedNodeId && action.id === "post_webhook"
         );
-        const method = (methodInput || "POST").toUpperCase();
-        const allowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
-        if (!allowedMethods.includes(method)) {
-          alert("Invalid method selected");
-          return;
-        }
-
-        const headersInput = window.prompt(
-          "Headers as JSON array (optional), e.g. [{\"key\":\"Authorization\",\"value\":\"Bearer token\"}]",
-          "[]"
-        );
-
-        let headers: { key: string; value: string }[] = [];
-        if (headersInput && headersInput.trim()) {
-          try {
-            const parsedHeaders = JSON.parse(headersInput);
-            if (!Array.isArray(parsedHeaders)) {
-              throw new Error("Headers should be an array");
-            }
-            headers = parsedHeaders;
-          } catch {
-            alert("Invalid headers JSON");
-            return;
-          }
-        }
-
-        const bodyTemplateInput = window.prompt(
-          "Body template JSON (optional). Use placeholders like {{payload.name}}",
-          ""
-        );
-
-        const timeoutInput = window.prompt(
-          "Timeout in ms (optional, 1000-30000). Leave empty for default 10000",
-          ""
-        );
-
-        let timeoutMs: number | undefined = undefined;
-        if (timeoutInput && timeoutInput.trim()) {
-          const parsedTimeout = Number(timeoutInput.trim());
-          if (!Number.isInteger(parsedTimeout) || parsedTimeout < 1000 || parsedTimeout > 30000) {
-            alert("Timeout must be an integer between 1000 and 30000");
-            return;
-          }
-          timeoutMs = parsedTimeout;
-        }
-
-        let auth: Record<string, unknown> = { type: "none" };
-        const shouldAddApiKey = window.prompt(
-          "Add API key auth? (yes/no)",
-          "no"
-        );
-        if ((shouldAddApiKey || "no").toLowerCase() === "yes") {
-          const key = window.prompt("API key name");
-          const value = window.prompt("API key value");
-          const addToInput = window.prompt("Add API key to? (header or query)", "header");
-          const addTo = (addToInput || "header").toLowerCase();
-          if (!key || !key.trim() || !value || !value.trim()) {
-            alert("API key name and value are required");
-            return;
-          }
-          if (addTo !== "header" && addTo !== "query") {
-            alert("Add API key to must be header or query");
-            return;
-          }
-          auth = {
-            type: "api_key",
-            key: key.trim(),
-            value: value.trim(),
-            addTo,
-          };
-        }
-
-        actionMetadata = {
-          url: url.trim(),
-          method,
-          headers,
-          bodyTemplate: bodyTemplateInput?.trim() || undefined,
-          timeoutMs,
-          auth,
-        };
+        actionMetadata = existing?.actionMetadata || getDefaultPostWebhookMetadata();
       }
 
       setSelectedActions(prev => {
@@ -201,10 +219,22 @@ function App() {
 
     setModalTitle(app.name);
     setIsModalOpen(false);
+    setIsActionConfigOpen(app.id === "post_webhook");
   };
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds: Edge[]) => addEdge(params, eds)),
+    (params: Connection) =>
+      setEdges((eds: Edge[]) =>
+        addEdge(
+          {
+            ...params,
+            markerEnd: undefined,
+            markerStart: undefined,
+            style: { stroke: "#d1d5db", strokeWidth: 1.2 },
+          },
+          eds
+        )
+      ),
     [setEdges]
   );
 
@@ -230,6 +260,16 @@ function App() {
     };
     setNodes([centerNode]);
   }, []);
+
+  useEffect(() => {
+    setEdges((eds) =>
+      eds.map((edge) => ({
+        ...edge,
+        markerEnd: undefined,
+        markerStart: undefined,
+      }))
+    );
+  }, [setEdges]);
 
   const addNodeAfter = useCallback(
     (afterNodeId: string) => {
@@ -282,16 +322,14 @@ function App() {
               source: afterNodeId,
               target: newNodeId,
               type: "default",
-              style: { stroke: "#9ca3af", strokeWidth: 2 },
-              markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
+              style: { stroke: "#d1d5db", strokeWidth: 1.2 },
             },
             {
               id: `e${newNodeId}-${edgeToRemove.target}`,
               source: newNodeId,
               target: edgeToRemove.target,
               type: "default",
-              style: { stroke: "#9ca3af", strokeWidth: 2 },
-              markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
+              style: { stroke: "#d1d5db", strokeWidth: 1.2 },
             }
           );
           return newEdges;
@@ -303,8 +341,7 @@ function App() {
               source: afterNodeId,
               target: newNodeId,
               type: "default",
-              style: { stroke: "#9ca3af", strokeWidth: 2 },
-              markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
+              style: { stroke: "#d1d5db", strokeWidth: 1.2 },
             },
           ];
         }
@@ -352,8 +389,7 @@ function App() {
           source: incomingEdge.source,
           target: outgoingEdge.target,
           type: "default",
-          style: { stroke: "#9ca3af", strokeWidth: 2 },
-          markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
+          style: { stroke: "#d1d5db", strokeWidth: 1.2 },
         };
         return [...newEdges, connectingEdge];
       }
@@ -379,6 +415,25 @@ function App() {
 
   const items = selectedNodeId === "1" ? availableTriggers : availableActions;
 
+  const updatePostWebhookMetadata = (
+    nodeId: string,
+    updater: (current: PostWebhookMetadata) => PostWebhookMetadata
+  ) => {
+    setSelectedActions((prev) =>
+      prev.map((action) => {
+        if (action.nodeId !== nodeId || action.id !== "post_webhook") {
+          return action;
+        }
+
+        const nextMetadata = updater(getPostWebhookMetadata(action.actionMetadata));
+        return {
+          ...action,
+          actionMetadata: nextMetadata,
+        };
+      })
+    );
+  };
+
   const handleTestAction = async (action: TriggerActionRes) => {
     if (action.id !== "post_webhook") {
       alert("Test Action is only available for post_webhook");
@@ -387,6 +442,12 @@ function App() {
 
     if (!action.actionMetadata) {
       alert("Configure this action first");
+      return;
+    }
+
+    const normalizedMetadata = getPostWebhookMetadata(action.actionMetadata);
+    if (!normalizedMetadata.url.trim()) {
+      alert("Webhook URL is required");
       return;
     }
 
@@ -423,7 +484,7 @@ function App() {
       const response = await axios.post(
         `${BACKEND_URL}/api/v1/zap/test-post-webhook`,
         {
-          actionMetadata: action.actionMetadata,
+          actionMetadata: normalizedMetadata,
           samplePayload,
         },
         {
@@ -476,11 +537,31 @@ function App() {
         return Number(a.nodeId || "0") - Number(b.nodeId || "0");
       });
 
+      for (const action of orderedActions) {
+        if (action.id !== "post_webhook") {
+          continue;
+        }
+
+        const metadata = getPostWebhookMetadata(action.actionMetadata);
+        if (!metadata.url.trim()) {
+          alert(`Step ${action.nodeId || "-"}: URL is required`);
+          return;
+        }
+
+        if (!isValidHttpUrl(metadata.url.trim())) {
+          alert(`Step ${action.nodeId || "-"}: URL must be a valid http/https URL`);
+          return;
+        }
+      }
+
       const zapData = {
         availableTriggerId: selectedTrigger.id,
         actions: orderedActions.map(action => ({
           availableActionId: action.id,
-          actionMetadata: action.actionMetadata
+          actionMetadata:
+            action.id === "post_webhook"
+              ? getPostWebhookMetadata(action.actionMetadata)
+              : action.actionMetadata
         }))
       };
       await createZap(zapData);
@@ -500,13 +581,30 @@ function App() {
   });
 
   const canPublish = selectedTrigger && selectedActions.length > 0 && allNodesHaveApps;
+  const activeConfigAction =
+    selectedNodeId
+      ? selectedActions.find(
+        (action) => action.nodeId === selectedNodeId && action.id === "post_webhook"
+      ) || null
+      : null;
+  const activeConfigMetadata = activeConfigAction
+    ? getPostWebhookMetadata(activeConfigAction.actionMetadata)
+    : null;
+  const activeTestKey = activeConfigAction
+    ? activeConfigAction.nodeId || activeConfigAction.id
+    : null;
+  const activeTestResult = activeTestKey ? actionTestResults[activeTestKey] : undefined;
+  const canTestActiveConfig =
+    !!activeConfigMetadata &&
+    activeConfigMetadata.url.trim().length > 0 &&
+    isValidHttpUrl(activeConfigMetadata.url.trim());
 
   return (
     <div
       style={{
         width: "100vw",
         height: "100vh",
-        backgroundColor: "#f0f0f0",
+        backgroundColor: "#f6f7fb",
         position: "relative",
         overflow: "hidden",
       }}
@@ -518,7 +616,7 @@ function App() {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         nodeTypes={nodeTypes}
-        className="bg-white"
+        className="bg-transparent"
         nodesDraggable={false}
         panOnDrag={[0, 1, 2]}
         onPaneClick={(e) => e.preventDefault()}
@@ -529,8 +627,13 @@ function App() {
         minZoom={0.5}
         maxZoom={2}
         defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+        defaultEdgeOptions={{
+          markerEnd: undefined,
+          markerStart: undefined,
+          style: { stroke: "#d1d5db", strokeWidth: 1.2 },
+        }}
       >
-        <Background variant={BackgroundVariant.Dots} color="#d1d5db" gap={16} size={1} />
+        <Background variant={BackgroundVariant.Dots} color="#d8dde6" gap={18} size={1} />
         <Controls />
       </ReactFlow>
 
@@ -538,85 +641,291 @@ function App() {
         <button
           onClick={handlePublish}
           disabled={!canPublish || isPublishing}
-          className={`px-4 py-2 rounded-full font-medium transition-all ${!canPublish || isPublishing
-            ? 'bg-gray-400 cursor-not-allowed'
-            : 'bg-[#ff4f00] hover:bg-[#ff4f00]/90 text-white'
+          className={`px-4 py-2 rounded-full font-medium shadow-sm transition-all ${!canPublish || isPublishing
+            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            : 'bg-[#ff5a1f] hover:bg-[#ef4e14] text-white'
             }`}
         >
           {isPublishing ? 'Publishing...' : 'Publish Zap'}
         </button>
       </div>
 
-      <div className="fixed left-8 top-8 z-50 w-[420px] max-h-[85vh] overflow-auto rounded-lg border border-gray-200 bg-white p-4 shadow">
-        <h3 className="text-sm font-semibold text-gray-800">Action Tests</h3>
-        {selectedActions.length === 0 && (
-          <p className="mt-2 text-xs text-gray-500">Add actions to enable pre-publish testing.</p>
-        )}
+      {isActionConfigOpen && activeConfigAction && activeConfigMetadata && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setIsActionConfigOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[90vh] overflow-auto rounded-lg border border-gray-200 bg-white p-5 shadow-lg"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-base font-semibold text-gray-900">
+                Configure Step {activeConfigAction.nodeId || "-"}: {activeConfigAction.name}
+              </h3>
+              <button
+                onClick={() => setIsActionConfigOpen(false)}
+                className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
 
-        <div className="mt-3 space-y-3">
-          {[...selectedActions]
-            .sort((a, b) => Number(a.nodeId || "0") - Number(b.nodeId || "0"))
-            .map((action) => {
-              const testKey = action.nodeId || action.id;
-              const testResult = actionTestResults[testKey];
-              const canTest = action.id === "post_webhook" && !!action.actionMetadata;
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600">URL</label>
+                <input
+                  type="text"
+                  value={activeConfigMetadata.url}
+                  onChange={(e) =>
+                    updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                      ...current,
+                      url: e.target.value,
+                    }))
+                  }
+                  placeholder="https://example.com/webhook"
+                  className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                />
+              </div>
 
-              return (
-                <div key={testKey} className="rounded border border-gray-200 p-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-gray-900">
-                      Step {action.nodeId || "-"}: {action.name}
-                    </p>
-                    <button
-                      onClick={() => handleTestAction(action)}
-                      disabled={!canTest || testResult?.isLoading}
-                      className={`rounded px-3 py-1 text-xs font-medium ${canTest && !testResult?.isLoading
-                        ? "bg-[#ff4f00] text-white hover:bg-[#ff4f00]/90"
-                        : "cursor-not-allowed bg-gray-300 text-gray-600"
-                        }`}
-                    >
-                      {testResult?.isLoading ? "Testing..." : "Test Action"}
-                    </button>
-                  </div>
-
-                  {!canTest && (
-                    <p className="mt-2 text-xs text-gray-500">
-                      Test is available only for post_webhook with configured metadata.
-                    </p>
-                  )}
-
-                  {testResult && !testResult.isLoading && (
-                    <div className="mt-2 rounded bg-gray-50 p-2 text-xs text-gray-700">
-                      {testResult.requestPreview && (
-                        <p>
-                          <span className="font-semibold">Request:</span>{" "}
-                          {JSON.stringify(testResult.requestPreview)}
-                        </p>
-                      )}
-                      {typeof testResult.responseStatus === "number" && (
-                        <p>
-                          <span className="font-semibold">Response Status:</span>{" "}
-                          {testResult.responseStatus}
-                        </p>
-                      )}
-                      {typeof testResult.responseBody === "string" && (
-                        <p>
-                          <span className="font-semibold">Response Body:</span>{" "}
-                          {testResult.responseBody.slice(0, 300)}
-                        </p>
-                      )}
-                      {testResult.error && (
-                        <p className="text-red-600">
-                          <span className="font-semibold">Error:</span> {testResult.error}
-                        </p>
-                      )}
-                    </div>
-                  )}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600">Method</label>
+                  <select
+                    value={activeConfigMetadata.method}
+                    onChange={(e) =>
+                      updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                        ...current,
+                        method: e.target.value as PostWebhookMethod,
+                      }))
+                    }
+                    className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                  >
+                    {ALLOWED_METHODS.map((method) => (
+                      <option key={method} value={method}>
+                        {method}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              );
-            })}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600">Timeout (ms)</label>
+                  <input
+                    type="number"
+                    min={1000}
+                    max={30000}
+                    value={activeConfigMetadata.timeoutMs ?? ""}
+                    onChange={(e) =>
+                      updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                        ...current,
+                        timeoutMs: e.target.value ? Number(e.target.value) : undefined,
+                      }))
+                    }
+                    placeholder="10000"
+                    className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600">Headers</label>
+                <div className="mt-1 space-y-1">
+                  {activeConfigMetadata.headers.map((header, index) => (
+                    <div key={index} className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={header.key}
+                        onChange={(e) =>
+                          updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => {
+                            const nextHeaders = [...current.headers];
+                            nextHeaders[index] = {
+                              ...nextHeaders[index],
+                              key: e.target.value,
+                            };
+                            return {
+                              ...current,
+                              headers: nextHeaders,
+                            };
+                          })
+                        }
+                        placeholder="Key"
+                        className="w-[45%] rounded border border-gray-300 px-2 py-1 text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={header.value}
+                        onChange={(e) =>
+                          updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => {
+                            const nextHeaders = [...current.headers];
+                            nextHeaders[index] = {
+                              ...nextHeaders[index],
+                              value: e.target.value,
+                            };
+                            return {
+                              ...current,
+                              headers: nextHeaders,
+                            };
+                          })
+                        }
+                        placeholder="Value"
+                        className="w-[45%] rounded border border-gray-300 px-2 py-1 text-xs"
+                      />
+                      <button
+                        onClick={() =>
+                          updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                            ...current,
+                            headers: current.headers.filter((_, headerIndex) => headerIndex !== index),
+                          }))
+                        }
+                        className="flex h-7 w-7 items-center justify-center rounded border border-gray-300 text-sm leading-none text-gray-500 hover:border-red-300 hover:text-red-500"
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={() =>
+                    updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                      ...current,
+                      headers: [...current.headers, { key: "", value: "" }],
+                    }))
+                  }
+                  className="mt-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                >
+                  + Add Header
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600">Body Template (JSON)</label>
+                <textarea
+                  rows={4}
+                  value={activeConfigMetadata.bodyTemplate || ""}
+                  onChange={(e) =>
+                    updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                      ...current,
+                      bodyTemplate: e.target.value,
+                    }))
+                  }
+                  placeholder='{"name":"{{payload.name}}","event":"{{payload.event}}"}'
+                  className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                />
+              </div>
+
+              <div className="rounded border border-gray-200 p-2">
+                <label className="flex items-center gap-2 text-xs font-medium text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={activeConfigMetadata.auth.type === "api_key"}
+                    onChange={(e) =>
+                      updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                        ...current,
+                        auth: e.target.checked
+                          ? { type: "api_key", key: "", value: "", addTo: "header" }
+                          : { type: "none" },
+                      }))
+                    }
+                  />
+                  Use API Key Auth
+                </label>
+
+                {activeConfigMetadata.auth.type === "api_key" && (
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={activeConfigMetadata.auth.key}
+                      onChange={(e) =>
+                        updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                          ...current,
+                          auth: current.auth.type === "api_key"
+                            ? { ...current.auth, key: e.target.value }
+                            : current.auth,
+                        }))
+                      }
+                      placeholder="API key name"
+                      className="rounded border border-gray-300 px-2 py-1 text-xs"
+                    />
+                    <input
+                      type="text"
+                      value={activeConfigMetadata.auth.value}
+                      onChange={(e) =>
+                        updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                          ...current,
+                          auth: current.auth.type === "api_key"
+                            ? { ...current.auth, value: e.target.value }
+                            : current.auth,
+                        }))
+                      }
+                      placeholder="API key value"
+                      className="rounded border border-gray-300 px-2 py-1 text-xs"
+                    />
+                    <select
+                      value={activeConfigMetadata.auth.addTo}
+                      onChange={(e) =>
+                        updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                          ...current,
+                          auth: current.auth.type === "api_key"
+                            ? {
+                              ...current.auth,
+                              addTo: e.target.value === "query" ? "query" : "header",
+                            }
+                            : current.auth,
+                        }))
+                      }
+                      className="rounded border border-gray-300 px-2 py-1 text-xs"
+                    >
+                      <option value="header">Header</option>
+                      <option value="query">Query</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={() => handleTestAction(activeConfigAction)}
+                  disabled={!canTestActiveConfig || activeTestResult?.isLoading}
+                  className={`rounded px-3 py-1 text-xs font-medium ${canTestActiveConfig && !activeTestResult?.isLoading
+                    ? "bg-[#ff4f00] text-white hover:bg-[#ff4f00]/90"
+                    : "cursor-not-allowed bg-gray-300 text-gray-600"
+                    }`}
+                >
+                  {activeTestResult?.isLoading ? "Testing..." : "Test Action"}
+                </button>
+              </div>
+            </div>
+
+            {activeTestResult && !activeTestResult.isLoading && (
+              <div className="mt-3 rounded bg-gray-50 p-2 text-xs text-gray-700">
+                {activeTestResult.requestPreview && (
+                  <p>
+                    <span className="font-semibold">Request:</span>{" "}
+                    {JSON.stringify(activeTestResult.requestPreview)}
+                  </p>
+                )}
+                {typeof activeTestResult.responseStatus === "number" && (
+                  <p>
+                    <span className="font-semibold">Response Status:</span>{" "}
+                    {activeTestResult.responseStatus}
+                  </p>
+                )}
+                {typeof activeTestResult.responseBody === "string" && (
+                  <p>
+                    <span className="font-semibold">Response Body:</span>{" "}
+                    {activeTestResult.responseBody.slice(0, 300)}
+                  </p>
+                )}
+                {activeTestResult.error && (
+                  <p className="text-red-600">
+                    <span className="font-semibold">Error:</span> {activeTestResult.error}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={modalTitle} loading={loading}>
         <div className="space-y-4">
