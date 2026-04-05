@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useState, useEffect } from "react";
+import axios from "axios";
 import ReactFlow, {
   Node,
   BackgroundVariant,
@@ -19,10 +20,19 @@ import Modal, { ModalItem } from "@/components/Modal";
 import { useAuth } from "@/hooks/useAuth";
 import { useTriggerAction, TriggerActionRes as BaseTriggerActionRes } from "@/hooks/useTriggerAction";
 import { useCreateZap } from "@/hooks/useCreateZap";
+import { BACKEND_URL } from "@/config";
 
 type TriggerActionRes = BaseTriggerActionRes & {
   nodeId?: string;
   actionMetadata?: Record<string, unknown>;
+};
+
+type ActionTestResult = {
+  isLoading: boolean;
+  requestPreview?: any;
+  responseStatus?: number;
+  responseBody?: string;
+  error?: string;
 };
 
 const nodeTypes = { workflowNode: WorkflowNode };
@@ -50,6 +60,7 @@ function App() {
   const [modalTitle, setModalTitle] = useState("Select an App");
   const [selectedTrigger, setSelectedTrigger] = useState<TriggerActionRes | null>(null);
   const [selectedActions, setSelectedActions] = useState<TriggerActionRes[]>([]);
+  const [actionTestResults, setActionTestResults] = useState<Record<string, ActionTestResult>>({});
 
   const handleNodeClick = (nodeId: string) => {
     setSelectedNodeId(nodeId);
@@ -352,6 +363,83 @@ function App() {
 
   const items = selectedNodeId === "1" ? availableTriggers : availableActions;
 
+  const handleTestAction = async (action: TriggerActionRes) => {
+    if (action.id !== "post_webhook") {
+      alert("Test Action is only available for post_webhook");
+      return;
+    }
+
+    if (!action.actionMetadata) {
+      alert("Configure this action first");
+      return;
+    }
+
+    const payloadInput = window.prompt(
+      "Enter sample payload JSON for test run",
+      "{\"name\":\"Alice\",\"event\":\"signup\"}"
+    );
+
+    if (!payloadInput || !payloadInput.trim()) {
+      alert("Sample payload is required");
+      return;
+    }
+
+    let samplePayload: any;
+    try {
+      samplePayload = JSON.parse(payloadInput);
+    } catch {
+      alert("Invalid sample payload JSON");
+      return;
+    }
+
+    const testKey = action.nodeId || action.id;
+    setActionTestResults((prev) => ({
+      ...prev,
+      [testKey]: { isLoading: true },
+    }));
+
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        throw new Error("No authentication token found");
+      }
+
+      const response = await axios.post(
+        `${BACKEND_URL}/api/v1/zap/test-post-webhook`,
+        {
+          actionMetadata: action.actionMetadata,
+          samplePayload,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: token,
+          },
+        }
+      );
+
+      setActionTestResults((prev) => ({
+        ...prev,
+        [testKey]: {
+          isLoading: false,
+          requestPreview: response.data.requestPreview,
+          responseStatus: response.data.responseStatus,
+          responseBody: response.data.responseBody,
+          error: response.data.error,
+        },
+      }));
+    } catch (err: any) {
+      const message = err.response?.data?.message || err.message || "Failed to test action";
+      setActionTestResults((prev) => ({
+        ...prev,
+        [testKey]: {
+          isLoading: false,
+          error: message,
+        },
+      }));
+    }
+  };
+
   const handlePublish = async () => {
     if (!selectedTrigger) {
       alert('Please select a trigger first');
@@ -441,6 +529,77 @@ function App() {
         >
           {isPublishing ? 'Publishing...' : 'Publish Zap'}
         </button>
+      </div>
+
+      <div className="fixed left-8 top-8 z-50 w-[420px] max-h-[85vh] overflow-auto rounded-lg border border-gray-200 bg-white p-4 shadow">
+        <h3 className="text-sm font-semibold text-gray-800">Action Tests</h3>
+        {selectedActions.length === 0 && (
+          <p className="mt-2 text-xs text-gray-500">Add actions to enable pre-publish testing.</p>
+        )}
+
+        <div className="mt-3 space-y-3">
+          {[...selectedActions]
+            .sort((a, b) => Number(a.nodeId || "0") - Number(b.nodeId || "0"))
+            .map((action) => {
+              const testKey = action.nodeId || action.id;
+              const testResult = actionTestResults[testKey];
+              const canTest = action.id === "post_webhook" && !!action.actionMetadata;
+
+              return (
+                <div key={testKey} className="rounded border border-gray-200 p-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-gray-900">
+                      Step {action.nodeId || "-"}: {action.name}
+                    </p>
+                    <button
+                      onClick={() => handleTestAction(action)}
+                      disabled={!canTest || testResult?.isLoading}
+                      className={`rounded px-3 py-1 text-xs font-medium ${canTest && !testResult?.isLoading
+                        ? "bg-[#ff4f00] text-white hover:bg-[#ff4f00]/90"
+                        : "cursor-not-allowed bg-gray-300 text-gray-600"
+                        }`}
+                    >
+                      {testResult?.isLoading ? "Testing..." : "Test Action"}
+                    </button>
+                  </div>
+
+                  {!canTest && (
+                    <p className="mt-2 text-xs text-gray-500">
+                      Test is available only for post_webhook with configured metadata.
+                    </p>
+                  )}
+
+                  {testResult && !testResult.isLoading && (
+                    <div className="mt-2 rounded bg-gray-50 p-2 text-xs text-gray-700">
+                      {testResult.requestPreview && (
+                        <p>
+                          <span className="font-semibold">Request:</span>{" "}
+                          {JSON.stringify(testResult.requestPreview)}
+                        </p>
+                      )}
+                      {typeof testResult.responseStatus === "number" && (
+                        <p>
+                          <span className="font-semibold">Response Status:</span>{" "}
+                          {testResult.responseStatus}
+                        </p>
+                      )}
+                      {typeof testResult.responseBody === "string" && (
+                        <p>
+                          <span className="font-semibold">Response Body:</span>{" "}
+                          {testResult.responseBody.slice(0, 300)}
+                        </p>
+                      )}
+                      {testResult.error && (
+                        <p className="text-red-600">
+                          <span className="font-semibold">Error:</span> {testResult.error}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+        </div>
       </div>
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={modalTitle} loading={loading}>

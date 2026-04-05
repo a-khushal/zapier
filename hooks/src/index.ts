@@ -1,9 +1,16 @@
 import express, { Request, Response } from "express"
+import cors from "cors"
 import { PrismaClient } from "@prisma/client"
 
 const client = new PrismaClient()
 
 const app = express()
+app.use(cors({
+  origin: "http://localhost:3000",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+}))
+
 app.use(express.json())
 
 app.post("/hooks/catch/:userId/:zapId", async (req: Request, res: Response) => {

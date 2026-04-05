@@ -150,7 +150,7 @@ function ZapsTable({ zaps }: { zaps: Zap[] }) {
                                 </td>
                                 <td className="px-4 py-2">{zap.id}</td>
                                 <td className="px-4 py-2 max-w-xs break-all">
-                                    {`${WEBHOOK_URL}/catch/${userId}/${zap.id}`}
+                                    {`${WEBHOOK_URL}/hooks/catch/${userId}/${zap.id}`}
                                 </td>
                                 <td className="px-4 py-2">
                                     {new Date(zap.createdAt).toLocaleString("en-GB", {
