@@ -109,11 +109,38 @@ function App() {
           ""
         );
 
+        let auth: Record<string, unknown> = { type: "none" };
+        const shouldAddApiKey = window.prompt(
+          "Add API key auth? (yes/no)",
+          "no"
+        );
+        if ((shouldAddApiKey || "no").toLowerCase() === "yes") {
+          const key = window.prompt("API key name");
+          const value = window.prompt("API key value");
+          const addToInput = window.prompt("Add API key to? (header or query)", "header");
+          const addTo = (addToInput || "header").toLowerCase();
+          if (!key || !key.trim() || !value || !value.trim()) {
+            alert("API key name and value are required");
+            return;
+          }
+          if (addTo !== "header" && addTo !== "query") {
+            alert("Add API key to must be header or query");
+            return;
+          }
+          auth = {
+            type: "api_key",
+            key: key.trim(),
+            value: value.trim(),
+            addTo,
+          };
+        }
+
         actionMetadata = {
           url: url.trim(),
           method,
           headers,
           bodyTemplate: bodyTemplateInput?.trim() || undefined,
+          auth,
         };
       }
 

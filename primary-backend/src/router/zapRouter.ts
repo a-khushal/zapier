@@ -2,12 +2,63 @@ import dotenv from "dotenv"
 dotenv.config({ path: "../.env" });
 
 import { Router } from "express";
+import crypto from "crypto";
 import { authMiddleWare } from "../middleware";
 import { ZapCreateSchema } from "../types";
 import { db } from "../db";
 import { ExtendedRequest } from "./userRouter";
 
 const router = Router()
+
+function getEncryptionKey() {
+    const rawKey = process.env.ACTIONS_ENCRYPTION_KEY;
+    if (!rawKey) {
+        return null;
+    }
+    return crypto.createHash("sha256").update(rawKey).digest();
+}
+
+function encryptSecret(value: string) {
+    if (value.startsWith("enc:v1:")) {
+        return value;
+    }
+
+    const key = getEncryptionKey();
+    if (!key) {
+        throw new Error("ACTIONS_ENCRYPTION_KEY is required to save auth secrets");
+    }
+
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+    const tag = cipher.getAuthTag();
+
+    return `enc:v1:${iv.toString("base64")}:${tag.toString("base64")}:${encrypted.toString("base64")}`;
+}
+
+function encryptActionMetadata(metadata: any) {
+    if (!metadata || typeof metadata !== "object") {
+        return metadata;
+    }
+
+    const nextMetadata = { ...metadata };
+    const auth = nextMetadata.auth;
+    if (!auth || typeof auth !== "object") {
+        return nextMetadata;
+    }
+
+    const nextAuth = { ...auth };
+    if (
+        nextAuth.type === "api_key" &&
+        typeof nextAuth.value === "string" &&
+        nextAuth.value
+    ) {
+        nextAuth.value = encryptSecret(nextAuth.value);
+    }
+
+    nextMetadata.auth = nextAuth;
+    return nextMetadata;
+}
 
 router.post("", authMiddleWare, async (req, res) => {
     try {
@@ -27,7 +78,7 @@ router.post("", authMiddleWare, async (req, res) => {
                     actions: {
                         create: parsedResponse.data.actions.map((x, idx) => ({
                             actionId: x.availableActionId,
-                            metadata: x.actionMetadata || {},
+                            metadata: encryptActionMetadata(x.actionMetadata || {}),
                             sortingOrder: idx,
                         })),
                     },

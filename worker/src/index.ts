@@ -4,6 +4,11 @@ dotenv.config({ path: "./.env", quiet: true });
 import { PrismaClient } from "@prisma/client";
 import { Kafka } from "kafkajs"
 
+declare const require: any;
+declare const process: any;
+declare const Buffer: any;
+const crypto = require("crypto");
+
 const TOPIC_NAME = "zap-events"
 
 const kafka = new Kafka({
@@ -21,6 +26,56 @@ type ActionForExecution = {
   actionId: string;
   metadata: any;
 };
+
+function getEncryptionKey() {
+  const rawKey = process.env.ACTIONS_ENCRYPTION_KEY;
+  if (!rawKey) {
+    return null;
+  }
+  return crypto.createHash("sha256").update(rawKey).digest();
+}
+
+function decryptSecretIfEncrypted(value: unknown) {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  if (!value.startsWith("enc:v1:")) {
+    return value;
+  }
+
+  const parts = value.split(":");
+  if (parts.length !== 5) {
+    throw new Error("Invalid encrypted secret format");
+  }
+
+  const key = getEncryptionKey();
+  if (!key) {
+    throw new Error("ACTIONS_ENCRYPTION_KEY is required to decrypt auth secrets");
+  }
+
+  const iv = Buffer.from(parts[2], "base64");
+  const tag = Buffer.from(parts[3], "base64");
+  const encrypted = Buffer.from(parts[4], "base64");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  return decrypted.toString("utf8");
+}
+
+function resolveAuth(metadata: any) {
+  const auth = metadata?.auth;
+  if (!auth || typeof auth !== "object") {
+    return { type: "none" };
+  }
+
+  const nextAuth: any = { ...auth };
+  if (nextAuth.type === "api_key") {
+    nextAuth.value = decryptSecretIfEncrypted(nextAuth.value);
+  }
+
+  return nextAuth;
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -99,6 +154,18 @@ async function executeAction(action: ActionForExecution, payload: unknown) {
     }
   }
 
+  let requestUrl = metadata.url;
+  const auth = resolveAuth(metadata);
+  if (auth.type === "api_key" && auth.key && auth.value) {
+    if (auth.addTo === "query") {
+      const urlObj = new URL(requestUrl);
+      urlObj.searchParams.set(String(auth.key), String(auth.value));
+      requestUrl = urlObj.toString();
+    } else {
+      headers[String(auth.key)] = String(auth.value);
+    }
+  }
+
   let body: string | undefined = undefined;
   if (method !== "GET") {
     if (metadata.bodyTemplate && typeof metadata.bodyTemplate === "string") {
@@ -110,17 +177,18 @@ async function executeAction(action: ActionForExecution, payload: unknown) {
   }
 
   const requestSummary = {
-    url: metadata.url,
+    url: requestUrl,
     method,
     headerNames: Object.keys(headers),
     bodyPreview: body ? body.slice(0, 500) : null,
+    authType: auth.type || "none",
   };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const response = await fetch(metadata.url, {
+    const response = await fetch(requestUrl, {
       method,
       headers: {
         "Content-Type": "application/json",
