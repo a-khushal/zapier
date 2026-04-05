@@ -12,12 +12,19 @@ const kafka = new Kafka({
 })
 
 const db = new PrismaClient();
+const MAX_ATTEMPTS = 3;
+const BACKOFF_MS = [1000, 2000, 4000];
+const REQUEST_TIMEOUT_MS = 10000;
 
 type ActionForExecution = {
   id: string;
   actionId: string;
   metadata: any;
 };
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function resolvePayloadPath(payload: any, path: string) {
   const keys = path.split(".");
@@ -48,61 +55,125 @@ function renderBodyTemplate(template: string, payload: any) {
 }
 
 async function executeAction(action: ActionForExecution, payload: unknown) {
-  switch (action.actionId) {
-    case "post_webhook": {
-      const metadata = action.metadata || {};
-      if (!metadata.url) {
-        throw new Error("post_webhook requires metadata.url");
-      }
+  if (action.actionId !== "post_webhook") {
+    return {
+      success: false,
+      shouldRetry: false,
+      error: `Unsupported action type: ${action.actionId}`,
+      requestSummary: {
+        actionId: action.actionId,
+      },
+    };
+  }
 
-      const method = (metadata.method || "POST").toUpperCase();
-      const allowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
-      if (!allowedMethods.includes(method)) {
-        throw new Error("post_webhook method must be GET, POST, PUT, PATCH or DELETE");
-      }
+  const metadata = action.metadata || {};
+  if (!metadata.url) {
+    return {
+      success: false,
+      shouldRetry: false,
+      error: "post_webhook requires metadata.url",
+      requestSummary: {},
+    };
+  }
 
-      const headers: Record<string, string> = {};
-      if (Array.isArray(metadata.headers)) {
-        for (const header of metadata.headers) {
-          if (header?.key) {
-            headers[header.key] = String(header.value || "");
-          }
-        }
-      }
-
-      let body: string | undefined = undefined;
-      if (method !== "GET") {
-        if (metadata.bodyTemplate && typeof metadata.bodyTemplate === "string") {
-          const rendered = renderBodyTemplate(metadata.bodyTemplate, payload);
-          body = JSON.stringify(JSON.parse(rendered));
-        } else {
-          body = JSON.stringify(payload);
-        }
-      }
-
-      const response = await fetch(metadata.url, {
+  const method = (metadata.method || "POST").toUpperCase();
+  const allowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+  if (!allowedMethods.includes(method)) {
+    return {
+      success: false,
+      shouldRetry: false,
+      error: "post_webhook method must be GET, POST, PUT, PATCH or DELETE",
+      requestSummary: {
+        url: metadata.url,
         method,
-        headers: {
-          "Content-Type": "application/json",
-          ...headers,
-        },
-        body,
-      });
+      },
+    };
+  }
 
-      if (!response.ok) {
-        throw new Error(`post_webhook failed with status ${response.status}`);
+  const headers: Record<string, string> = {};
+  if (Array.isArray(metadata.headers)) {
+    for (const header of metadata.headers) {
+      if (header?.key) {
+        headers[header.key] = String(header.value || "");
       }
+    }
+  }
 
+  let body: string | undefined = undefined;
+  if (method !== "GET") {
+    if (metadata.bodyTemplate && typeof metadata.bodyTemplate === "string") {
+      const rendered = renderBodyTemplate(metadata.bodyTemplate, payload);
+      body = JSON.stringify(JSON.parse(rendered));
+    } else {
+      body = JSON.stringify(payload);
+    }
+  }
+
+  const requestSummary = {
+    url: metadata.url,
+    method,
+    headerNames: Object.keys(headers),
+    bodyPreview: body ? body.slice(0, 500) : null,
+  };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(metadata.url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body,
+      signal: controller.signal,
+    });
+
+    const responseBody = await response.text();
+
+    if (response.status >= 500) {
       return {
-        output: {
-          status: response.status,
-          response: await response.text()
-        },
+        success: false,
+        shouldRetry: true,
+        error: `post_webhook failed with status ${response.status}`,
+        requestSummary,
+        responseStatus: response.status,
+        responseBody,
       };
     }
 
-    default:
-      throw new Error(`Unsupported action type: ${action.actionId}`);
+    if (response.status >= 400) {
+      return {
+        success: false,
+        shouldRetry: false,
+        error: `post_webhook failed with status ${response.status}`,
+        requestSummary,
+        responseStatus: response.status,
+        responseBody,
+      };
+    }
+
+    return {
+      success: true,
+      shouldRetry: false,
+      requestSummary,
+      responseStatus: response.status,
+      responseBody,
+      output: {
+        status: response.status,
+        response: responseBody,
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      shouldRetry: true,
+      error: String(error),
+      requestSummary,
+    };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -128,7 +199,24 @@ async function executeZapRun(zapRunId: string) {
 
   for (const action of zapRun.zap.actions) {
     const startedAt = new Date();
-    try {
+    const step = await db.zapRunStep.create({
+      data: {
+        zapRunId: zapRun.id,
+        actionId: action.id,
+        status: "FAILED",
+        input: payload as any,
+        startedAt,
+      },
+    });
+
+    let finalError = "Action failed";
+    let finalOutput: any = null;
+    let attemptCount = 0;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      attemptCount = attempt;
+      const attemptStartedAt = new Date();
+
       const result = await executeAction(
         {
           id: action.id,
@@ -137,31 +225,60 @@ async function executeZapRun(zapRunId: string) {
         },
         payload
       );
-      await db.zapRunStep.create({
+
+      await db.zapRunStepAttempt.create({
         data: {
-          zapRunId: zapRun.id,
-          actionId: action.id,
-          status: "SUCCESS",
-          input: payload as any,
-          output: result.output as any,
-          startedAt,
+          zapRunStepId: step.id,
+          attemptNumber: attempt,
+          requestSummary: result.requestSummary as any,
+          responseStatus: result.responseStatus,
+          responseBody: result.responseBody,
+          error: result.error,
+          startedAt: attemptStartedAt,
           completedAt: new Date(),
         },
       });
-    } catch (error) {
-      await db.zapRunStep.create({
-        data: {
-          zapRunId: zapRun.id,
-          actionId: action.id,
-          status: "FAILED",
-          input: payload as any,
-          error: String(error),
-          startedAt,
-          completedAt: new Date(),
-        },
-      });
-      throw error;
+
+      if (result.success) {
+        finalOutput = result.output;
+        break;
+      }
+
+      if (result.error) {
+        finalError = result.error;
+      }
+
+      if (!result.shouldRetry || attempt === MAX_ATTEMPTS) {
+        break;
+      }
+
+      await sleep(BACKOFF_MS[attempt - 1] || BACKOFF_MS[BACKOFF_MS.length - 1]);
     }
+
+    if (finalOutput) {
+      await db.zapRunStep.update({
+        where: { id: step.id },
+        data: {
+          status: "SUCCESS",
+          output: finalOutput as any,
+          attemptCount,
+          completedAt: new Date(),
+        },
+      });
+      continue;
+    }
+
+    await db.zapRunStep.update({
+      where: { id: step.id },
+      data: {
+        status: "FAILED",
+        error: finalError,
+        attemptCount,
+        completedAt: new Date(),
+      },
+    });
+
+    throw new Error(finalError);
   }
 }
 
