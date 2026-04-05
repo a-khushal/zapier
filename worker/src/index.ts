@@ -19,7 +19,13 @@ const kafka = new Kafka({
 const db = new PrismaClient();
 const MAX_ATTEMPTS = 3;
 const BACKOFF_MS = [1000, 2000, 4000];
-const REQUEST_TIMEOUT_MS = 10000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+const MIN_REQUEST_TIMEOUT_MS = 1000;
+const MAX_REQUEST_TIMEOUT_MS = 30000;
+const WEBHOOK_TARGET_ALLOWLIST = (process.env.WEBHOOK_TARGET_ALLOWLIST || "")
+  .split(",")
+  .map((item: string) => item.trim().toLowerCase())
+  .filter(Boolean);
 
 type ActionForExecution = {
   id: string;
@@ -109,6 +115,45 @@ function renderBodyTemplate(template: string, payload: any) {
   });
 }
 
+function isUnsafeWebhookTarget(url: string) {
+  if ((process.env.NODE_ENV || "").toLowerCase() !== "production") {
+    return false;
+  }
+
+  const hostname = new URL(url).hostname.toLowerCase();
+  const isAllowlisted = WEBHOOK_TARGET_ALLOWLIST.some(
+    (entry: string) => hostname === entry || hostname.endsWith(`.${entry}`)
+  );
+  if (isAllowlisted) {
+    return false;
+  }
+
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname.startsWith("10.") ||
+    hostname.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  );
+}
+
+function normalizeTimeoutMs(timeoutMs: unknown) {
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs)) {
+    return DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+
+  const rounded = Math.floor(timeoutMs);
+  if (rounded < MIN_REQUEST_TIMEOUT_MS) {
+    return MIN_REQUEST_TIMEOUT_MS;
+  }
+  if (rounded > MAX_REQUEST_TIMEOUT_MS) {
+    return MAX_REQUEST_TIMEOUT_MS;
+  }
+
+  return rounded;
+}
+
 async function executeAction(action: ActionForExecution, payload: unknown) {
   if (action.actionId !== "post_webhook") {
     return {
@@ -145,18 +190,75 @@ async function executeAction(action: ActionForExecution, payload: unknown) {
     };
   }
 
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(metadata.url);
+  } catch {
+    return {
+      success: false,
+      shouldRetry: false,
+      error: "post_webhook requires a valid URL",
+      requestSummary: {},
+    };
+  }
+
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    return {
+      success: false,
+      shouldRetry: false,
+      error: "post_webhook URL must be http or https",
+      requestSummary: {
+        url: metadata.url,
+      },
+    };
+  }
+
+  if (method === "GET" && metadata.bodyTemplate) {
+    return {
+      success: false,
+      shouldRetry: false,
+      error: "GET method cannot have a body template",
+      requestSummary: {
+        url: metadata.url,
+        method,
+      },
+    };
+  }
+
   const headers: Record<string, string> = {};
   if (Array.isArray(metadata.headers)) {
     for (const header of metadata.headers) {
-      if (header?.key) {
-        headers[header.key] = String(header.value || "");
+      const key = String(header?.key || "").trim();
+      if (!key) {
+        return {
+          success: false,
+          shouldRetry: false,
+          error: "post_webhook header keys must be non-empty",
+          requestSummary: {
+            url: metadata.url,
+            method,
+          },
+        };
       }
+      headers[key] = String(header.value || "");
     }
   }
 
   let requestUrl = metadata.url;
   const auth = resolveAuth(metadata);
-  if (auth.type === "api_key" && auth.key && auth.value) {
+  if (auth.type === "api_key") {
+    if (!auth.key || !auth.value) {
+      return {
+        success: false,
+        shouldRetry: false,
+        error: "post_webhook api_key auth requires key and value",
+        requestSummary: {
+          url: metadata.url,
+          method,
+        },
+      };
+    }
+
     if (auth.addTo === "query") {
       const urlObj = new URL(requestUrl);
       urlObj.searchParams.set(String(auth.key), String(auth.value));
@@ -166,11 +268,39 @@ async function executeAction(action: ActionForExecution, payload: unknown) {
     }
   }
 
+  if (isUnsafeWebhookTarget(requestUrl)) {
+    return {
+      success: false,
+      shouldRetry: false,
+      error: "Unsafe webhook target URL is blocked in production",
+      requestSummary: {
+        url: requestUrl,
+        method,
+      },
+    };
+  }
+
+  const timeoutMs = normalizeTimeoutMs(metadata.timeoutMs);
+
   let body: string | undefined = undefined;
   if (method !== "GET") {
     if (metadata.bodyTemplate && typeof metadata.bodyTemplate === "string") {
-      const rendered = renderBodyTemplate(metadata.bodyTemplate, payload);
-      body = JSON.stringify(JSON.parse(rendered));
+      try {
+        const rendered = renderBodyTemplate(metadata.bodyTemplate, payload);
+        body = JSON.stringify(JSON.parse(rendered));
+      } catch {
+        return {
+          success: false,
+          shouldRetry: false,
+          error: "Body template must be valid JSON after substitution",
+          requestSummary: {
+            url: requestUrl,
+            method,
+            authType: auth.type || "none",
+            timeoutMs,
+          },
+        };
+      }
     } else {
       body = JSON.stringify(payload);
     }
@@ -182,10 +312,11 @@ async function executeAction(action: ActionForExecution, payload: unknown) {
     headerNames: Object.keys(headers),
     bodyPreview: body ? body.slice(0, 500) : null,
     authType: auth.type || "none",
+    timeoutMs,
   };
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(requestUrl, {

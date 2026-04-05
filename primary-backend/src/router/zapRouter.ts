@@ -4,11 +4,18 @@ dotenv.config({ path: "../.env" });
 import { Router } from "express";
 import crypto from "crypto";
 import { authMiddleWare } from "../middleware";
-import { TestPostWebhookSchema, ZapCreateSchema } from "../types";
+import { TestPostWebhookSchema, ValidatePostWebhookMetadataSchema, ZapCreateSchema } from "../types";
 import { db } from "../db";
 import { ExtendedRequest } from "./userRouter";
 
 const router = Router()
+const DEFAULT_TIMEOUT_MS = 10000;
+const MIN_TIMEOUT_MS = 1000;
+const MAX_TIMEOUT_MS = 30000;
+const WEBHOOK_TARGET_ALLOWLIST = (process.env.WEBHOOK_TARGET_ALLOWLIST || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
 
 function getEncryptionKey() {
     const rawKey = process.env.ACTIONS_ENCRYPTION_KEY;
@@ -116,6 +123,32 @@ function renderBodyTemplate(template: string, payload: any) {
     });
 }
 
+function assertSafeWebhookTarget(url: string) {
+    if ((process.env.NODE_ENV || "").toLowerCase() !== "production") {
+        return;
+    }
+
+    const hostname = new URL(url).hostname.toLowerCase();
+    const isAllowlisted = WEBHOOK_TARGET_ALLOWLIST.some(
+        (entry) => hostname === entry || hostname.endsWith(`.${entry}`)
+    );
+    if (isAllowlisted) {
+        return;
+    }
+
+    const isBlockedHost =
+        hostname === "localhost" ||
+        hostname === "127.0.0.1" ||
+        hostname === "::1" ||
+        hostname.startsWith("10.") ||
+        hostname.startsWith("192.168.") ||
+        /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname);
+
+    if (isBlockedHost) {
+        throw { status: 422, message: "Unsafe webhook target URL is blocked in production" };
+    }
+}
+
 router.post("", authMiddleWare, async (req, res) => {
     try {
         const parsedResponse = ZapCreateSchema.safeParse(req.body);
@@ -126,13 +159,34 @@ router.post("", authMiddleWare, async (req, res) => {
         const extendedReq = req as ExtendedRequest;
         const userId = extendedReq.id;
 
+        const parsedActions = parsedResponse.data.actions.map((action) => {
+            if (action.availableActionId !== "post_webhook") {
+                return {
+                    ...action,
+                    actionMetadata: action.actionMetadata || {},
+                };
+            }
+
+            const metadataParsed = ValidatePostWebhookMetadataSchema.safeParse(action.actionMetadata || {});
+            if (!metadataParsed.success) {
+                throw { status: 422, message: "Invalid post_webhook action metadata" };
+            }
+
+            assertSafeWebhookTarget(metadataParsed.data.url);
+
+            return {
+                ...action,
+                actionMetadata: metadataParsed.data,
+            };
+        });
+
         const zapId = await db.$transaction(async (tx) => {
             const zap = await tx.zap.create({
                 data: {
                     userId,
                     triggerId: "",
                     actions: {
-                        create: parsedResponse.data.actions.map((x, idx) => ({
+                        create: parsedActions.map((x, idx) => ({
                             actionId: x.availableActionId,
                             metadata: encryptActionMetadata(x.actionMetadata || {}),
                             sortingOrder: idx,
@@ -177,13 +231,14 @@ router.post("/test-post-webhook", authMiddleWare, async (req, res) => {
 
         const metadata = parsedResponse.data.actionMetadata;
         const samplePayload = parsedResponse.data.samplePayload;
+        assertSafeWebhookTarget(metadata.url);
 
         const method = (metadata.method || "POST").toUpperCase();
         const headers: Record<string, string> = {};
 
         for (const header of metadata.headers || []) {
             if (header.key) {
-                headers[header.key] = String(header.value || "");
+                headers[header.key.trim()] = String(header.value || "");
             }
         }
 
@@ -199,6 +254,11 @@ router.post("/test-post-webhook", authMiddleWare, async (req, res) => {
                 headers[String(auth.key)] = authValue;
             }
         }
+
+        const timeoutMs = Math.max(
+            MIN_TIMEOUT_MS,
+            Math.min(MAX_TIMEOUT_MS, metadata.timeoutMs || DEFAULT_TIMEOUT_MS)
+        );
 
         let body: string | undefined = undefined;
         if (method !== "GET") {
@@ -220,10 +280,11 @@ router.post("/test-post-webhook", authMiddleWare, async (req, res) => {
             headerNames: Object.keys(headers),
             bodyPreview: body ? body.slice(0, 500) : null,
             authType: auth.type || "none",
+            timeoutMs,
         };
 
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
             const response = await fetch(requestUrl, {

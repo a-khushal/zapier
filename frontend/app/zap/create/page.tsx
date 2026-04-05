@@ -120,6 +120,21 @@ function App() {
           ""
         );
 
+        const timeoutInput = window.prompt(
+          "Timeout in ms (optional, 1000-30000). Leave empty for default 10000",
+          ""
+        );
+
+        let timeoutMs: number | undefined = undefined;
+        if (timeoutInput && timeoutInput.trim()) {
+          const parsedTimeout = Number(timeoutInput.trim());
+          if (!Number.isInteger(parsedTimeout) || parsedTimeout < 1000 || parsedTimeout > 30000) {
+            alert("Timeout must be an integer between 1000 and 30000");
+            return;
+          }
+          timeoutMs = parsedTimeout;
+        }
+
         let auth: Record<string, unknown> = { type: "none" };
         const shouldAddApiKey = window.prompt(
           "Add API key auth? (yes/no)",
@@ -151,6 +166,7 @@ function App() {
           method,
           headers,
           bodyTemplate: bodyTemplateInput?.trim() || undefined,
+          timeoutMs,
           auth,
         };
       }
