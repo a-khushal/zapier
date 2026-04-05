@@ -73,7 +73,48 @@ function App() {
           alert("Webhook URL is required for POST webhook action");
           return;
         }
-        actionMetadata = { url: url.trim() };
+
+        const methodInput = window.prompt(
+          "HTTP method? (GET, POST, PUT, PATCH, DELETE)",
+          "POST"
+        );
+        const method = (methodInput || "POST").toUpperCase();
+        const allowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+        if (!allowedMethods.includes(method)) {
+          alert("Invalid method selected");
+          return;
+        }
+
+        const headersInput = window.prompt(
+          "Headers as JSON array (optional), e.g. [{\"key\":\"Authorization\",\"value\":\"Bearer token\"}]",
+          "[]"
+        );
+
+        let headers: { key: string; value: string }[] = [];
+        if (headersInput && headersInput.trim()) {
+          try {
+            const parsedHeaders = JSON.parse(headersInput);
+            if (!Array.isArray(parsedHeaders)) {
+              throw new Error("Headers should be an array");
+            }
+            headers = parsedHeaders;
+          } catch {
+            alert("Invalid headers JSON");
+            return;
+          }
+        }
+
+        const bodyTemplateInput = window.prompt(
+          "Body template JSON (optional). Use placeholders like {{payload.name}}",
+          ""
+        );
+
+        actionMetadata = {
+          url: url.trim(),
+          method,
+          headers,
+          bodyTemplate: bodyTemplateInput?.trim() || undefined,
+        };
       }
 
       setSelectedActions(prev => {

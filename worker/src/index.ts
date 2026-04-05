@@ -19,6 +19,34 @@ type ActionForExecution = {
   metadata: any;
 };
 
+function resolvePayloadPath(payload: any, path: string) {
+  const keys = path.split(".");
+  let value = payload;
+
+  for (const key of keys) {
+    if (value === null || value === undefined) {
+      return "";
+    }
+    value = value[key];
+  }
+
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
+
+function renderBodyTemplate(template: string, payload: any) {
+  return template.replace(/\{\{\s*payload\.([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, path) => {
+    return resolvePayloadPath(payload, path);
+  });
+}
+
 async function executeAction(action: ActionForExecution, payload: unknown) {
   switch (action.actionId) {
     case "post_webhook": {
@@ -27,12 +55,38 @@ async function executeAction(action: ActionForExecution, payload: unknown) {
         throw new Error("post_webhook requires metadata.url");
       }
 
+      const method = (metadata.method || "POST").toUpperCase();
+      const allowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+      if (!allowedMethods.includes(method)) {
+        throw new Error("post_webhook method must be GET, POST, PUT, PATCH or DELETE");
+      }
+
+      const headers: Record<string, string> = {};
+      if (Array.isArray(metadata.headers)) {
+        for (const header of metadata.headers) {
+          if (header?.key) {
+            headers[header.key] = String(header.value || "");
+          }
+        }
+      }
+
+      let body: string | undefined = undefined;
+      if (method !== "GET") {
+        if (metadata.bodyTemplate && typeof metadata.bodyTemplate === "string") {
+          const rendered = renderBodyTemplate(metadata.bodyTemplate, payload);
+          body = JSON.stringify(JSON.parse(rendered));
+        } else {
+          body = JSON.stringify(payload);
+        }
+      }
+
       const response = await fetch(metadata.url, {
-        method: "POST",
+        method,
         headers: {
           "Content-Type": "application/json",
+          ...headers,
         },
-        body: JSON.stringify(payload),
+        body,
       });
 
       if (!response.ok) {
