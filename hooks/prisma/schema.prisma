@@ -86,6 +86,7 @@ model ZapRunStep {
   zapRunId    String
   actionId    String
   status      ZapRunStepStatus
+  attemptCount Int             @default(0)
   input       Json?
   output      Json?
   error       String?
@@ -93,7 +94,23 @@ model ZapRunStep {
   completedAt DateTime?
   action      Action           @relation(fields: [actionId], references: [id], onDelete: Cascade)
   zapRun      ZapRun           @relation(fields: [zapRunId], references: [id], onDelete: Cascade)
+  attempts    ZapRunStepAttempt[]
 
   @@index([zapRunId])
   @@index([actionId])
+}
+
+model ZapRunStepAttempt {
+  id            String      @id @default(uuid())
+  zapRunStepId  String
+  attemptNumber Int
+  requestSummary Json
+  responseStatus Int?
+  responseBody   String?
+  error          String?
+  startedAt      DateTime
+  completedAt    DateTime
+  zapRunStep     ZapRunStep @relation(fields: [zapRunStepId], references: [id], onDelete: Cascade)
+
+  @@index([zapRunStepId])
 }

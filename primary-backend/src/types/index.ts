@@ -1,5 +1,26 @@
 import { z } from "zod";
 
+const PLACEHOLDER_REGEX = /\{\{\s*payload\.([a-zA-Z0-9_.]+)\s*\}\}/g;
+
+function isHttpOrHttpsUrl(value: string) {
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+        return false;
+    }
+}
+
+function isBodyTemplateJson(template: string) {
+    try {
+        const testRendered = template.replace(PLACEHOLDER_REGEX, "null");
+        JSON.parse(testRendered);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 export const SignUpSchema = z.object({
     userName: z.string().min(3),
     email: z.string().email(),
@@ -18,3 +39,54 @@ export const ZapCreateSchema = z.object({
         actionMetadata: z.any().optional()
     })),
 })
+
+const PostWebhookHeaderSchema = z.object({
+    key: z.string().trim().min(1),
+    value: z.string(),
+});
+
+const PostWebhookAuthSchema = z.union([
+    z.object({ type: z.literal("none") }),
+    z.object({
+        type: z.literal("api_key"),
+        key: z.string().trim().min(1),
+        value: z.string(),
+        addTo: z.enum(["header", "query"]),
+    }),
+]);
+
+const PostWebhookMetadataSchema = z.object({
+    url: z.string().url().refine(isHttpOrHttpsUrl, {
+        message: "URL must be http or https",
+    }),
+    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(),
+    headers: z.array(PostWebhookHeaderSchema).optional(),
+    bodyTemplate: z.string().optional(),
+    auth: PostWebhookAuthSchema.optional(),
+    timeoutMs: z.number().int().min(1000).max(30000).optional(),
+}).superRefine((metadata, ctx) => {
+    const method = (metadata.method || "POST").toUpperCase();
+
+    if (method === "GET" && metadata.bodyTemplate) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "GET method cannot have a body template",
+            path: ["bodyTemplate"],
+        });
+    }
+
+    if (metadata.bodyTemplate && !isBodyTemplateJson(metadata.bodyTemplate)) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Body template must be valid JSON after placeholder substitution",
+            path: ["bodyTemplate"],
+        });
+    }
+});
+
+export const TestPostWebhookSchema = z.object({
+    actionMetadata: PostWebhookMetadataSchema,
+    samplePayload: z.any(),
+});
+
+export const ValidatePostWebhookMetadataSchema = PostWebhookMetadataSchema;
