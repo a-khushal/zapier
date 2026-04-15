@@ -45,16 +45,6 @@ const PostWebhookHeaderSchema = z.object({
     value: z.string(),
 });
 
-const PostWebhookAuthSchema = z.union([
-    z.object({ type: z.literal("none") }),
-    z.object({
-        type: z.literal("api_key"),
-        key: z.string().trim().min(1),
-        value: z.string(),
-        addTo: z.enum(["header", "query"]),
-    }),
-]);
-
 const PostWebhookMetadataSchema = z.object({
     url: z.string().url().refine(isHttpOrHttpsUrl, {
         message: "URL must be http or https",
@@ -62,8 +52,6 @@ const PostWebhookMetadataSchema = z.object({
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(),
     headers: z.array(PostWebhookHeaderSchema).optional(),
     bodyTemplate: z.string().optional(),
-    auth: PostWebhookAuthSchema.optional(),
-    timeoutMs: z.number().int().min(1000).max(30000).optional(),
 }).superRefine((metadata, ctx) => {
     const method = (metadata.method || "POST").toUpperCase();
 

@@ -2,98 +2,13 @@ import dotenv from "dotenv"
 dotenv.config({ path: "../.env" });
 
 import { Router } from "express";
-import crypto from "crypto";
 import { authMiddleWare } from "../middleware";
 import { TestPostWebhookSchema, ValidatePostWebhookMetadataSchema, ZapCreateSchema } from "../types";
 import { db } from "../db";
 import { ExtendedRequest } from "./userRouter";
 
 const router = Router()
-const DEFAULT_TIMEOUT_MS = 10000;
-const MIN_TIMEOUT_MS = 1000;
-const MAX_TIMEOUT_MS = 30000;
-const WEBHOOK_TARGET_ALLOWLIST = (process.env.WEBHOOK_TARGET_ALLOWLIST || "")
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-
-function getEncryptionKey() {
-    const rawKey = process.env.ACTIONS_ENCRYPTION_KEY;
-    if (!rawKey) {
-        return null;
-    }
-    return crypto.createHash("sha256").update(rawKey).digest();
-}
-
-function encryptSecret(value: string) {
-    if (value.startsWith("enc:v1:")) {
-        return value;
-    }
-
-    const key = getEncryptionKey();
-    if (!key) {
-        throw new Error("ACTIONS_ENCRYPTION_KEY is required to save auth secrets");
-    }
-
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-    const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-    const tag = cipher.getAuthTag();
-
-    return `enc:v1:${iv.toString("base64")}:${tag.toString("base64")}:${encrypted.toString("base64")}`;
-}
-
-function encryptActionMetadata(metadata: any) {
-    if (!metadata || typeof metadata !== "object") {
-        return metadata;
-    }
-
-    const nextMetadata = { ...metadata };
-    const auth = nextMetadata.auth;
-    if (!auth || typeof auth !== "object") {
-        return nextMetadata;
-    }
-
-    const nextAuth = { ...auth };
-    if (
-        nextAuth.type === "api_key" &&
-        typeof nextAuth.value === "string" &&
-        nextAuth.value
-    ) {
-        nextAuth.value = encryptSecret(nextAuth.value);
-    }
-
-    nextMetadata.auth = nextAuth;
-    return nextMetadata;
-}
-
-function decryptSecretIfEncrypted(value: unknown) {
-    if (typeof value !== "string") {
-        return value;
-    }
-
-    if (!value.startsWith("enc:v1:")) {
-        return value;
-    }
-
-    const parts = value.split(":");
-    if (parts.length !== 5) {
-        throw new Error("Invalid encrypted secret format");
-    }
-
-    const key = getEncryptionKey();
-    if (!key) {
-        throw new Error("ACTIONS_ENCRYPTION_KEY is required to decrypt auth secrets");
-    }
-
-    const iv = Buffer.from(parts[2], "base64");
-    const tag = Buffer.from(parts[3], "base64");
-    const encrypted = Buffer.from(parts[4], "base64");
-    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAuthTag(tag);
-    const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
-    return decrypted.toString("utf8");
-}
+const REQUEST_TIMEOUT_MS = 10000;
 
 function resolvePayloadPath(payload: any, path: string) {
     const keys = path.split(".");
@@ -121,32 +36,6 @@ function renderBodyTemplate(template: string, payload: any) {
     return template.replace(/\{\{\s*payload\.([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, path) => {
         return resolvePayloadPath(payload, path);
     });
-}
-
-function assertSafeWebhookTarget(url: string) {
-    if ((process.env.NODE_ENV || "").toLowerCase() !== "production") {
-        return;
-    }
-
-    const hostname = new URL(url).hostname.toLowerCase();
-    const isAllowlisted = WEBHOOK_TARGET_ALLOWLIST.some(
-        (entry) => hostname === entry || hostname.endsWith(`.${entry}`)
-    );
-    if (isAllowlisted) {
-        return;
-    }
-
-    const isBlockedHost =
-        hostname === "localhost" ||
-        hostname === "127.0.0.1" ||
-        hostname === "::1" ||
-        hostname.startsWith("10.") ||
-        hostname.startsWith("192.168.") ||
-        /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname);
-
-    if (isBlockedHost) {
-        throw { status: 422, message: "Unsafe webhook target URL is blocked in production" };
-    }
 }
 
 function getDurationMs(startedAt?: Date | null, completedAt?: Date | null) {
@@ -192,8 +81,6 @@ router.post("", authMiddleWare, async (req, res) => {
                 throw { status: 422, message: "Invalid post_webhook action metadata" };
             }
 
-            assertSafeWebhookTarget(metadataParsed.data.url);
-
             return {
                 ...action,
                 actionMetadata: metadataParsed.data,
@@ -208,7 +95,7 @@ router.post("", authMiddleWare, async (req, res) => {
                     actions: {
                         create: parsedActions.map((x, idx) => ({
                             actionId: x.availableActionId,
-                            metadata: encryptActionMetadata(x.actionMetadata || {}),
+                            metadata: x.actionMetadata || {},
                             sortingOrder: idx,
                         })),
                     },
@@ -251,7 +138,6 @@ router.post("/test-post-webhook", authMiddleWare, async (req, res) => {
 
         const metadata = parsedResponse.data.actionMetadata;
         const samplePayload = parsedResponse.data.samplePayload;
-        assertSafeWebhookTarget(metadata.url);
 
         const method = (metadata.method || "POST").toUpperCase();
         const headers: Record<string, string> = {};
@@ -262,23 +148,7 @@ router.post("/test-post-webhook", authMiddleWare, async (req, res) => {
             }
         }
 
-        let requestUrl = metadata.url;
-        const auth = metadata.auth || { type: "none" };
-        if (auth.type === "api_key" && auth.key && auth.value) {
-            const authValue = String(decryptSecretIfEncrypted(auth.value));
-            if (auth.addTo === "query") {
-                const urlObj = new URL(requestUrl);
-                urlObj.searchParams.set(String(auth.key), authValue);
-                requestUrl = urlObj.toString();
-            } else {
-                headers[String(auth.key)] = authValue;
-            }
-        }
-
-        const timeoutMs = Math.max(
-            MIN_TIMEOUT_MS,
-            Math.min(MAX_TIMEOUT_MS, metadata.timeoutMs || DEFAULT_TIMEOUT_MS)
-        );
+        const requestUrl = metadata.url;
 
         let body: string | undefined = undefined;
         if (method !== "GET") {
@@ -299,12 +169,11 @@ router.post("/test-post-webhook", authMiddleWare, async (req, res) => {
             method,
             headerNames: Object.keys(headers),
             bodyPreview: body ? body.slice(0, 500) : null,
-            authType: auth.type || "none",
-            timeoutMs,
+            timeoutMs: REQUEST_TIMEOUT_MS,
         };
 
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
         try {
             const response = await fetch(requestUrl, {

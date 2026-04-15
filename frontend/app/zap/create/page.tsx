@@ -41,17 +41,11 @@ type PostWebhookHeader = {
 
 type PostWebhookMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-type PostWebhookAuth =
-  | { type: "none" }
-  | { type: "api_key"; key: string; value: string; addTo: "header" | "query" };
-
 type PostWebhookMetadata = {
   url: string;
   method: PostWebhookMethod;
   headers: PostWebhookHeader[];
   bodyTemplate?: string;
-  timeoutMs?: number;
-  auth: PostWebhookAuth;
 };
 
 const ALLOWED_METHODS: PostWebhookMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
@@ -71,8 +65,6 @@ function getDefaultPostWebhookMetadata(): PostWebhookMetadata {
     method: "POST",
     headers: [],
     bodyTemplate: "",
-    timeoutMs: undefined,
-    auth: { type: "none" },
   };
 }
 
@@ -92,32 +84,11 @@ function getPostWebhookMetadata(
       value: String(header?.value || ""),
     }))
     : [];
-  const timeoutMs =
-    typeof raw.timeoutMs === "number" && Number.isFinite(raw.timeoutMs)
-      ? Math.floor(raw.timeoutMs)
-      : undefined;
-
-  let auth: PostWebhookAuth = { type: "none" };
-  if (
-    raw.auth &&
-    typeof raw.auth === "object" &&
-    raw.auth.type === "api_key"
-  ) {
-    auth = {
-      type: "api_key",
-      key: String(raw.auth.key || ""),
-      value: String(raw.auth.value || ""),
-      addTo: raw.auth.addTo === "query" ? "query" : "header",
-    };
-  }
-
   return {
     url: typeof raw.url === "string" ? raw.url : base.url,
     method,
     headers,
     bodyTemplate: typeof raw.bodyTemplate === "string" ? raw.bodyTemplate : base.bodyTemplate,
-    timeoutMs,
-    auth,
   };
 }
 
@@ -688,7 +659,7 @@ function App() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600">Method</label>
                   <select
@@ -707,23 +678,6 @@ function App() {
                       </option>
                     ))}
                   </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600">Timeout (ms)</label>
-                  <input
-                    type="number"
-                    min={1000}
-                    max={30000}
-                    value={activeConfigMetadata.timeoutMs ?? ""}
-                    onChange={(e) =>
-                      updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
-                        ...current,
-                        timeoutMs: e.target.value ? Number(e.target.value) : undefined,
-                      }))
-                    }
-                    placeholder="10000"
-                    className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
-                  />
                 </div>
               </div>
 
@@ -811,75 +765,6 @@ function App() {
                   placeholder='{"name":"{{payload.name}}","event":"{{payload.event}}"}'
                   className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
                 />
-              </div>
-
-              <div className="rounded border border-gray-200 p-2">
-                <label className="flex items-center gap-2 text-xs font-medium text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={activeConfigMetadata.auth.type === "api_key"}
-                    onChange={(e) =>
-                      updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
-                        ...current,
-                        auth: e.target.checked
-                          ? { type: "api_key", key: "", value: "", addTo: "header" }
-                          : { type: "none" },
-                      }))
-                    }
-                  />
-                  Use API Key Auth
-                </label>
-
-                {activeConfigMetadata.auth.type === "api_key" && (
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      value={activeConfigMetadata.auth.key}
-                      onChange={(e) =>
-                        updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
-                          ...current,
-                          auth: current.auth.type === "api_key"
-                            ? { ...current.auth, key: e.target.value }
-                            : current.auth,
-                        }))
-                      }
-                      placeholder="API key name"
-                      className="rounded border border-gray-300 px-2 py-1 text-xs"
-                    />
-                    <input
-                      type="text"
-                      value={activeConfigMetadata.auth.value}
-                      onChange={(e) =>
-                        updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
-                          ...current,
-                          auth: current.auth.type === "api_key"
-                            ? { ...current.auth, value: e.target.value }
-                            : current.auth,
-                        }))
-                      }
-                      placeholder="API key value"
-                      className="rounded border border-gray-300 px-2 py-1 text-xs"
-                    />
-                    <select
-                      value={activeConfigMetadata.auth.addTo}
-                      onChange={(e) =>
-                        updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
-                          ...current,
-                          auth: current.auth.type === "api_key"
-                            ? {
-                              ...current.auth,
-                              addTo: e.target.value === "query" ? "query" : "header",
-                            }
-                            : current.auth,
-                        }))
-                      }
-                      className="rounded border border-gray-300 px-2 py-1 text-xs"
-                    >
-                      <option value="header">Header</option>
-                      <option value="query">Query</option>
-                    </select>
-                  </div>
-                )}
               </div>
 
               <div className="flex justify-end">
