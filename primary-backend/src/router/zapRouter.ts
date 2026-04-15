@@ -64,6 +64,22 @@ function getRunStatusFromSteps(steps: Array<{ status: string }>) {
     return "PENDING";
 }
 
+function parseRunStatusFilter(value: unknown) {
+    const status = String(value || "ALL").toUpperCase();
+    if (status === "SUCCESS" || status === "FAILED" || status === "PENDING") {
+        return status;
+    }
+    return "ALL";
+}
+
+function parsePositiveInt(value: unknown, fallback: number) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return fallback;
+    }
+    return Math.floor(parsed);
+}
+
 function normalizeActionMetadata(availableActionId: string, actionMetadata: any) {
     if (availableActionId !== "post_webhook") {
         return actionMetadata || {};
@@ -249,6 +265,9 @@ router.get("/:zapId/runs", authMiddleWare, async (req, res) => {
         const extendedReq = req as ExtendedRequest;
         const userId = extendedReq.id;
         const { zapId } = req.params;
+        const statusFilter = parseRunStatusFilter(req.query.status);
+        const offset = parsePositiveInt(req.query.offset, 0);
+        const limit = Math.min(parsePositiveInt(req.query.limit, 10), 50);
 
         const zap = await db.zap.findFirst({
             where: { id: zapId, userId },
@@ -308,7 +327,25 @@ router.get("/:zapId/runs", authMiddleWare, async (req, res) => {
                 return bTime - aTime;
             });
 
-        res.status(200).json({ runs: formattedRuns });
+        const filteredRuns = statusFilter === "ALL"
+            ? formattedRuns
+            : formattedRuns.filter((run) => run.status === statusFilter);
+
+        const paginatedRuns = filteredRuns.slice(offset, offset + limit);
+        const nextOffset = offset + paginatedRuns.length;
+        const hasMore = nextOffset < filteredRuns.length;
+
+        res.status(200).json({
+            runs: paginatedRuns,
+            pageInfo: {
+                status: statusFilter,
+                offset,
+                limit,
+                totalFiltered: filteredRuns.length,
+                nextOffset,
+                hasMore,
+            },
+        });
     } catch (error: any) {
         console.error("Fetching zap runs error:", error);
         res.status(error.status || 500).json({
@@ -420,6 +457,66 @@ router.get("/run/:zapRunId", authMiddleWare, async (req, res) => {
         res.status(200).json({ run: formattedRun });
     } catch (error: any) {
         console.error("Fetching zap run details error:", error);
+        res.status(error.status || 500).json({
+            message: error.message || "Internal server error",
+        });
+    }
+});
+
+router.post("/run/:zapRunId/retry", authMiddleWare, async (req, res) => {
+    try {
+        const extendedReq = req as ExtendedRequest;
+        const userId = extendedReq.id;
+        const { zapRunId } = req.params;
+
+        const run = await db.zapRun.findFirst({
+            where: {
+                id: zapRunId,
+                zap: {
+                    userId,
+                },
+            },
+            include: {
+                zapRunSteps: {
+                    select: {
+                        status: true,
+                    },
+                },
+            },
+        });
+
+        if (!run) {
+            throw { status: 404, message: "Zap run not found" };
+        }
+
+        const runStatus = getRunStatusFromSteps(run.zapRunSteps);
+        if (runStatus !== "FAILED") {
+            throw { status: 422, message: "Only failed runs can be retried" };
+        }
+
+        const newRunId = await db.$transaction(async (tx) => {
+            const newRun = await tx.zapRun.create({
+                data: {
+                    zapId: run.zapId,
+                    metadata: run.metadata as any,
+                },
+            });
+
+            await tx.zapRunOutbox.create({
+                data: {
+                    zapRunId: newRun.id,
+                },
+            });
+
+            return newRun.id;
+        });
+
+        res.status(200).json({
+            message: "Run retry queued successfully",
+            newRunId,
+        });
+    } catch (error: any) {
+        console.error("Retrying run error:", error);
         res.status(error.status || 500).json({
             message: error.message || "Internal server error",
         });

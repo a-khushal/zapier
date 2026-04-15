@@ -100,6 +100,11 @@ type RunSummary = {
   totalAttempts: number;
 };
 
+type RunStatusFilter = "ALL" | "SUCCESS" | "FAILED" | "PENDING";
+
+const RUN_STATUS_FILTERS: RunStatusFilter[] = ["ALL", "SUCCESS", "FAILED", "PENDING"];
+const RUNS_PAGE_SIZE = 10;
+
 type RunAttempt = {
   id: string;
   attemptNumber: number;
@@ -159,6 +164,10 @@ export default function ZapDetailPage() {
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("ALL");
+  const [runsNextOffset, setRunsNextOffset] = useState(0);
+  const [runsHasMore, setRunsHasMore] = useState(false);
+  const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<RunDetail | null>(null);
   const [runDetailsLoading, setRunDetailsLoading] = useState(false);
@@ -202,20 +211,46 @@ export default function ZapDetailPage() {
     fetchZap();
   }, [zapId]);
 
-  const fetchRuns = async () => {
+  const fetchRuns = async ({
+    reset = false,
+    status,
+  }: {
+    reset?: boolean;
+    status?: RunStatusFilter;
+  } = {}) => {
     if (!zapId) {
       return;
     }
 
+    const activeStatus = status || runStatusFilter;
+    const offset = reset ? 0 : runsNextOffset;
+
     setRunsLoading(true);
-    setRunsError(null);
+    if (reset) {
+      setRunsError(null);
+    }
+
     try {
       const response = await axios.get(`${BACKEND_URL}/api/v1/zap/${zapId}/runs`, {
         headers: {
           ...getAuthHeader(),
         },
+        params: {
+          status: activeStatus,
+          limit: RUNS_PAGE_SIZE,
+          offset,
+        },
       });
-      setRuns(response.data.runs || []);
+      const fetchedRuns: RunSummary[] = response.data.runs || [];
+      const pageInfo = response.data.pageInfo || {};
+
+      setRuns((prev) => (reset ? fetchedRuns : [...prev, ...fetchedRuns]));
+      setRunsNextOffset(
+        typeof pageInfo.nextOffset === "number"
+          ? pageInfo.nextOffset
+          : offset + fetchedRuns.length
+      );
+      setRunsHasMore(Boolean(pageInfo.hasMore));
     } catch (err: any) {
       const message = err.response?.data?.message || err.message || "Failed to load run history";
       setRunsError(message);
@@ -225,8 +260,38 @@ export default function ZapDetailPage() {
   };
 
   useEffect(() => {
-    fetchRuns();
-  }, [zapId]);
+    if (!zapId) {
+      return;
+    }
+    fetchRuns({ reset: true, status: runStatusFilter });
+  }, [zapId, runStatusFilter]);
+
+  const retryRun = async (zapRunId: string) => {
+    setRetryingRunId(zapRunId);
+    try {
+      const response = await axios.post(
+        `${BACKEND_URL}/api/v1/zap/run/${zapRunId}/retry`,
+        {},
+        {
+          headers: {
+            ...getAuthHeader(),
+          },
+        }
+      );
+
+      showToast({
+        type: "success",
+        title: "Retry queued",
+        description: response.data?.newRunId ? `New run ${response.data.newRunId.slice(0, 8)}...` : undefined,
+      });
+      await fetchRuns({ reset: true, status: runStatusFilter });
+    } catch (err: any) {
+      const message = err.response?.data?.message || err.message || "Failed to retry run";
+      showToast({ type: "error", title: "Failed to retry run", description: message });
+    } finally {
+      setRetryingRunId(null);
+    }
+  };
 
   const loadRunDetails = async (zapRunId: string) => {
     setSelectedRunId(zapRunId);
@@ -296,7 +361,7 @@ export default function ZapDetailPage() {
       );
       showToast({ type: "success", title: "Test event sent", description: `HTTP ${response.status}` });
       setIsTestPayloadModalOpen(false);
-      fetchRuns();
+      fetchRuns({ reset: true, status: runStatusFilter });
     } catch (err: any) {
       const status = err.response?.status;
       const message =
@@ -478,10 +543,25 @@ export default function ZapDetailPage() {
       </div>
 
       <div className="mt-6 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-gray-900">Run History</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            {RUN_STATUS_FILTERS.map((status) => (
+              <button
+                key={status}
+                onClick={() => setRunStatusFilter(status)}
+                className={`rounded border px-2 py-1 text-xs ${runStatusFilter === status
+                  ? "border-[#ff4f00] bg-[#fff2ec] text-[#c63d00]"
+                  : "border-gray-300 text-gray-700 hover:bg-gray-50"
+                  }`}
+              >
+                {status === "ALL" ? "All" : status}
+              </button>
+            ))}
+          </div>
+
           <button
-            onClick={fetchRuns}
+            onClick={() => fetchRuns({ reset: true, status: runStatusFilter })}
             disabled={runsLoading}
             className={`rounded border px-3 py-1 text-sm ${runsLoading
               ? "cursor-not-allowed border-gray-300 text-gray-400"
@@ -508,7 +588,7 @@ export default function ZapDetailPage() {
                   <th className="px-2 py-2">Started</th>
                   <th className="px-2 py-2">Duration</th>
                   <th className="px-2 py-2">Steps</th>
-                  <th className="px-2 py-2"></th>
+                  <th className="px-2 py-2 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -535,17 +615,46 @@ export default function ZapDetailPage() {
                       {run.successStepCount}/{run.stepCount} success
                     </td>
                     <td className="px-2 py-2 text-right">
-                      <button
-                        onClick={() => loadRunDetails(run.id)}
-                        className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-                      >
-                        View
-                      </button>
+                      <div className="flex justify-end gap-1">
+                        {run.status === "FAILED" && (
+                          <button
+                            onClick={() => retryRun(run.id)}
+                            disabled={retryingRunId === run.id}
+                            className={`rounded border px-2 py-1 text-xs ${retryingRunId === run.id
+                              ? "cursor-not-allowed border-gray-300 text-gray-400"
+                              : "border-orange-300 text-orange-700 hover:bg-orange-50"
+                              }`}
+                          >
+                            {retryingRunId === run.id ? "Retrying..." : "Retry"}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => loadRunDetails(run.id)}
+                          className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          View
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {runsHasMore && (
+          <div className="mt-3 flex justify-center">
+            <button
+              onClick={() => fetchRuns({ reset: false, status: runStatusFilter })}
+              disabled={runsLoading}
+              className={`rounded border px-3 py-1 text-sm ${runsLoading
+                ? "cursor-not-allowed border-gray-300 text-gray-400"
+                : "border-gray-300 text-gray-700 hover:bg-gray-50"
+                }`}
+            >
+              {runsLoading ? "Loading..." : "Load More"}
+            </button>
           </div>
         )}
       </div>
