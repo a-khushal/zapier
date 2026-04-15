@@ -51,6 +51,8 @@ type PostWebhookMetadata = {
   bodyTemplate?: string;
 };
 
+const NODE_VERTICAL_GAP = 170;
+
 const ALLOWED_METHODS: PostWebhookMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 function isValidHttpUrl(value: string) {
@@ -97,6 +99,34 @@ function getPostWebhookMetadata(
 
 const nodeTypes = { workflowNode: WorkflowNode };
 
+function normalizeActionNodesLayout(nodes: Node[]) {
+  if (nodes.length === 0) {
+    return nodes;
+  }
+
+  const root = nodes[0];
+  const baseY = root.position.y;
+
+  return nodes.map((node, index) => {
+    if (index === 0) {
+      return node;
+    }
+
+    const stepNumber = index + 1;
+    return {
+      ...node,
+      position: {
+        ...node.position,
+        y: baseY + NODE_VERTICAL_GAP * index,
+      },
+      data: {
+        ...node.data,
+        subtitle: String(node.data.subtitle || "").replace(/^\d+\./, `${stepNumber}.`),
+      },
+    };
+  });
+}
+
 const initialEdges: Edge[] = [
   {
     id: "e1-2",
@@ -129,6 +159,22 @@ function App() {
   const [pendingTestAction, setPendingTestAction] = useState<TriggerActionRes | null>(null);
   const [isTestingAction, setIsTestingAction] = useState(false);
   const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false);
+  const [disabledActionNodeIds, setDisabledActionNodeIds] = useState<string[]>([]);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+  const markDirty = useCallback(() => {
+    setHasUnsavedChanges(true);
+  }, []);
+
+  const isNodeDisabled = useCallback(
+    (nodeId: string | null | undefined) => {
+      if (!nodeId) {
+        return false;
+      }
+      return disabledActionNodeIds.includes(String(nodeId));
+    },
+    [disabledActionNodeIds]
+  );
 
   const handleNodeClick = (nodeId: string) => {
     setSelectedNodeId(nodeId);
@@ -156,6 +202,8 @@ function App() {
     if (!selectedNodeId) {
       return;
     }
+
+    markDirty();
 
     if (selectedNodeId === '1') {
       setSelectedTrigger(app);
@@ -251,8 +299,25 @@ function App() {
     );
   }, [setEdges]);
 
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      return;
+    }
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [hasUnsavedChanges]);
+
   const addNodeAfter = useCallback(
-    (afterNodeId: string) => {
+    (afterNodeId: string, sourceAction?: TriggerActionRes | null) => {
+      markDirty();
       setNodes((nds: Node[]) => {
         const afterNode = nds.find((n) => n.id === afterNodeId);
         if (!afterNode) {
@@ -266,14 +331,13 @@ function App() {
         const newNode: Node = {
           id: newNodeId,
           type: "workflowNode",
-          position: { x: afterNode.position.x, y: afterNode.position.y + 170 },
+          position: { x: afterNode.position.x, y: afterNode.position.y + NODE_VERTICAL_GAP },
           data: {
-            icon: "action",
-            title: "Action",
+            icon: sourceAction?.image || "action",
+            title: sourceAction?.name || "Action",
             subtitle: `${afterNodeIndex + 2}. Select the event for your Zap to run`,
             type: "action",
-            onAddNode: addNodeAfter,
-            onDeleteNode: deleteNode,
+            appId: sourceAction?.id,
           },
         };
         const updatedNodes = [...nds.slice(0, afterNodeIndex + 1), newNode];
@@ -281,19 +345,19 @@ function App() {
           const nodeIndex = afterNodeIndex + 2 + idx;
           updatedNodes.push({
             ...node,
-            position: { ...node.position, y: node.position.y + 170 },
+            position: { ...node.position, y: node.position.y + NODE_VERTICAL_GAP },
             data: {
               ...node.data,
               subtitle: node.data.subtitle.replace(/^\d+\./, `${nodeIndex + 1}.`),
             },
           });
         });
-        return updatedNodes;
+        return normalizeActionNodesLayout(updatedNodes);
       });
 
+      const newNodeId = `${nodeIdCounter}`;
       setEdges((eds: Edge[]) => {
         const edgeToRemove = eds.find((e) => e.source === afterNodeId);
-        const newNodeId = `${nodeIdCounter}`;
         if (edgeToRemove) {
           const newEdges = eds.filter((e) => e.source !== afterNodeId);
           newEdges.push(
@@ -326,11 +390,33 @@ function App() {
           ];
         }
       });
+
+      if (sourceAction && sourceAction.id) {
+        setSelectedActions((prev) => {
+          const sourceIndex = prev.findIndex((action) => action.nodeId === afterNodeId);
+          const duplicatedAction: TriggerActionRes = {
+            ...sourceAction,
+            nodeId: newNodeId,
+            actionMetadata: sourceAction.actionMetadata
+              ? JSON.parse(JSON.stringify(sourceAction.actionMetadata))
+              : sourceAction.actionMetadata,
+          };
+
+          if (sourceIndex === -1) {
+            return [...prev, duplicatedAction];
+          }
+
+          const next = [...prev];
+          next.splice(sourceIndex + 1, 0, duplicatedAction);
+          return next;
+        });
+      }
     },
-    [nodeIdCounter, setNodes, setEdges]
+    [markDirty, nodeIdCounter, setEdges, setNodes]
   );
 
   const deleteNode = useCallback((nodeId: string) => {
+    markDirty();
     setNodes((nds: Node[]) => {
       const nodeIndex = nds.findIndex((n) => n.id === nodeId);
       if (nodeIndex === -1) return nds;
@@ -342,11 +428,11 @@ function App() {
           ...node,
           position: {
             ...node.position,
-            y: shouldMoveUp ? node.position.y - 170 : node.position.y,
+            y: shouldMoveUp ? node.position.y - NODE_VERTICAL_GAP : node.position.y,
           },
         };
       });
-      return nodesWithUpdatedPositions.map((node, idx) => {
+      return normalizeActionNodesLayout(nodesWithUpdatedPositions.map((node, idx) => {
         if (idx === 0) return node;
         const stepNumber = idx + 1;
         return {
@@ -356,8 +442,16 @@ function App() {
             subtitle: node.data.subtitle.replace(/^\d+\./, `${stepNumber}.`),
           },
         };
-      });
+      }));
     });
+
+    const normalizedNodeId = String(nodeId);
+    setDisabledActionNodeIds((prev) => prev.filter((id) => id !== normalizedNodeId));
+    setSelectedActions((prev) => prev.filter((action) => action.nodeId !== nodeId));
+    if (selectedNodeId === nodeId) {
+      setSelectedNodeId(null);
+      setIsActionConfigOpen(false);
+    }
 
     setEdges((eds) => {
       const incomingEdge = eds.find((e) => e.target === nodeId);
@@ -375,7 +469,55 @@ function App() {
       }
       return newEdges;
     });
-  }, []);
+  }, [markDirty, selectedNodeId]);
+
+  const moveActionNode = useCallback((nodeId: string, direction: "up" | "down") => {
+    markDirty();
+
+    setNodes((nds) => {
+      const index = nds.findIndex((node) => node.id === nodeId);
+      if (index <= 0) {
+        return nds;
+      }
+
+      const swapWith = direction === "up" ? index - 1 : index + 1;
+      if (swapWith <= 0 || swapWith >= nds.length) {
+        return nds;
+      }
+
+      const next = [...nds];
+      [next[index], next[swapWith]] = [next[swapWith], next[index]];
+      const nextChain = next.map((node) => node.id);
+      setEdges(
+        nextChain.slice(0, -1).map((sourceId, idx) => ({
+          id: `e${sourceId}-${nextChain[idx + 1]}`,
+          source: sourceId,
+          target: nextChain[idx + 1],
+          type: "default",
+          style: { stroke: "#d1d5db", strokeWidth: 1.2 },
+        }))
+      );
+
+      return normalizeActionNodesLayout(next);
+    });
+  }, [markDirty, setEdges]);
+
+  const duplicateActionNode = useCallback((nodeId: string) => {
+    const actionToDuplicate = selectedActions.find((action) => action.nodeId === nodeId) || null;
+    addNodeAfter(nodeId, actionToDuplicate);
+  }, [addNodeAfter, selectedActions]);
+
+  const toggleActionNodeEnabled = useCallback((nodeId: string) => {
+    markDirty();
+    const normalizedNodeId = String(nodeId);
+    setDisabledActionNodeIds((prev) => (
+      prev.includes(normalizedNodeId)
+        ? prev.filter((id) => id !== normalizedNodeId)
+        : [...prev, normalizedNodeId]
+    ));
+  }, [markDirty]);
+
+  const actionNodeIds = nodes.filter((node) => node.id !== "1").map((node) => node.id);
 
   const nodesWithCallbacks = nodes.map((node) => ({
     ...node,
@@ -384,11 +526,18 @@ function App() {
       ...node.data,
       onAddNode: addNodeAfter,
       onDeleteNode: deleteNode,
+      onDuplicateNode: duplicateActionNode,
+      onMoveUp: (nodeId: string) => moveActionNode(nodeId, "up"),
+      onMoveDown: (nodeId: string) => moveActionNode(nodeId, "down"),
+      onToggleEnabled: toggleActionNodeEnabled,
       onDeleteClick: (nodeId: string) => {
         deleteNode(nodeId);
       },
       onClick: handleNodeClick,
       isSelected: node.id === selectedNodeId,
+      isDisabled: isNodeDisabled(node.id),
+      isFirstAction: node.id !== "1" && actionNodeIds[0] === node.id,
+      isLastAction: node.id !== "1" && actionNodeIds[actionNodeIds.length - 1] === node.id,
     },
     selected: node.id === selectedNodeId,
   }));
@@ -399,6 +548,7 @@ function App() {
     nodeId: string,
     updater: (current: PostWebhookMetadata) => PostWebhookMetadata
   ) => {
+    markDirty();
     setSelectedActions((prev) =>
       prev.map((action) => {
         if (action.nodeId !== nodeId || action.id !== "post_webhook") {
@@ -524,8 +674,13 @@ function App() {
       return;
     }
 
-    if (selectedActions.length === 0) {
-      showToast({ type: "error", title: "Please add at least one action" });
+      const enabledActionsCount = selectedActions.filter((action) => {
+        const nodeId = action.nodeId || "";
+        return nodeId && !isNodeDisabled(nodeId);
+      }).length;
+
+    if (enabledActionsCount === 0) {
+      showToast({ type: "error", title: "Please add at least one enabled action" });
       return;
     }
 
@@ -541,11 +696,22 @@ function App() {
     }
 
     try {
-      const orderedActions = [...selectedActions].sort((a, b) => {
-        return Number(a.nodeId || "0") - Number(b.nodeId || "0");
+      const orderedActions = nodes
+        .filter((node) => node.id !== "1")
+        .map((node) => selectedActions.find((action) => action.nodeId === node.id))
+        .filter((action): action is TriggerActionRes => Boolean(action));
+
+      const enabledActions = orderedActions.filter((action) => {
+        const nodeId = action.nodeId || "";
+        return nodeId && !isNodeDisabled(nodeId);
       });
 
-      for (const action of orderedActions) {
+      if (enabledActions.length === 0) {
+        showToast({ type: "error", title: "Please add at least one enabled action" });
+        return;
+      }
+
+      for (const action of enabledActions) {
         if (action.id !== "post_webhook") {
           continue;
         }
@@ -564,7 +730,7 @@ function App() {
 
       const zapData = {
         availableTriggerId: selectedTrigger.id,
-        actions: orderedActions.map(action => ({
+        actions: enabledActions.map(action => ({
           availableActionId: action.id,
           actionMetadata:
             action.id === "post_webhook"
@@ -573,6 +739,7 @@ function App() {
         }))
       };
       await createZap(zapData);
+      setHasUnsavedChanges(false);
       showToast({ type: "success", title: "Zap created successfully" });
     } catch (error) {
       console.error('Failed to create Zap:', error);
@@ -588,7 +755,12 @@ function App() {
     return selectedActions.some(action => node.data.appId === action.id);
   });
 
-  const canPublish = selectedTrigger && selectedActions.length > 0 && allNodesHaveApps;
+  const enabledActionsCount = selectedActions.filter((action) => {
+    const nodeId = action.nodeId || "";
+    return nodeId && !isNodeDisabled(nodeId);
+  }).length;
+
+  const canPublish = selectedTrigger && enabledActionsCount > 0 && allNodesHaveApps;
   const activeConfigAction =
     selectedNodeId
       ? selectedActions.find(
@@ -602,10 +774,12 @@ function App() {
     ? activeConfigAction.nodeId || activeConfigAction.id
     : null;
   const activeTestResult = activeTestKey ? actionTestResults[activeTestKey] : undefined;
+  const isActiveConfigDisabled = !!activeConfigAction?.nodeId && isNodeDisabled(String(activeConfigAction.nodeId));
   const canTestActiveConfig =
     !!activeConfigMetadata &&
     activeConfigMetadata.url.trim().length > 0 &&
-    isValidHttpUrl(activeConfigMetadata.url.trim());
+    isValidHttpUrl(activeConfigMetadata.url.trim()) &&
+    !isActiveConfigDisabled;
 
   return (
     <div
@@ -646,16 +820,23 @@ function App() {
       </ReactFlow>
 
       <div className="fixed right-10 z-50" style={{ top: 'calc(1rem + 28px + 2px + 2rem)' }}>
-        <button
-          onClick={handlePublish}
-          disabled={!canPublish || isPublishing}
-          className={`px-4 py-2 rounded-full font-medium shadow-sm transition-all ${!canPublish || isPublishing
-            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-            : 'bg-[#ff5a1f] hover:bg-[#ef4e14] text-white'
-            }`}
-        >
-          {isPublishing ? 'Publishing...' : 'Publish Zap'}
-        </button>
+        <div className="flex items-center gap-2">
+          {hasUnsavedChanges && (
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+              Unsaved changes
+            </span>
+          )}
+          <button
+            onClick={handlePublish}
+            disabled={!canPublish || isPublishing}
+            className={`px-4 py-2 rounded-full font-medium shadow-sm transition-all ${!canPublish || isPublishing
+              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              : 'bg-[#ff5a1f] hover:bg-[#ef4e14] text-white'
+              }`}
+          >
+            {isPublishing ? 'Publishing...' : 'Publish Zap'}
+          </button>
+        </div>
       </div>
 
       {isActionConfigOpen && activeConfigAction && activeConfigMetadata && (
@@ -680,6 +861,12 @@ function App() {
             </div>
 
             <div className="space-y-3">
+              {isActiveConfigDisabled && (
+                <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  This step is disabled and will not run on publish.
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-medium text-gray-600">URL</label>
                 <input
