@@ -41,6 +41,7 @@ interface Zap {
     id: string;
     triggerId: string;
     userId: string;
+    isActive: boolean;
     trigger: Trigger;
     actions: Action[];
     createdAt: Date;
@@ -82,11 +83,21 @@ function useZaps() {
 
 export default function Dashboard() {
     useAuth();
-    const { loading, zaps, setZaps } = useZaps();
+    const { loading, zaps, setZaps, fetchZaps } = useZaps();
     const { showToast } = useToast();
     const router = useRouter()
     const [pendingDeleteZapId, setPendingDeleteZapId] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [busyStatusZapId, setBusyStatusZapId] = useState<string | null>(null);
+    const [busyDuplicateZapId, setBusyDuplicateZapId] = useState<string | null>(null);
+
+    const getAuthToken = () => {
+        const token = localStorage.getItem("token");
+        if (!token) {
+            throw new Error("No authentication token found");
+        }
+        return token;
+    };
 
     const handleDeleteZap = async () => {
         if (!pendingDeleteZapId) {
@@ -95,10 +106,7 @@ export default function Dashboard() {
 
         setIsDeleting(true);
         try {
-            const token = localStorage.getItem("token");
-            if (!token) {
-                throw new Error("No authentication token found");
-            }
+            const token = getAuthToken();
 
             await axios.delete(`${BACKEND_URL}/api/v1/zap/${pendingDeleteZapId}`, {
                 headers: {
@@ -117,6 +125,66 @@ export default function Dashboard() {
         }
     };
 
+    const handleToggleZapStatus = async (zapId: string, isActive: boolean) => {
+        setBusyStatusZapId(zapId);
+        try {
+            const token = getAuthToken();
+            const response = await axios.patch(
+                `${BACKEND_URL}/api/v1/zap/${zapId}/status`,
+                { isActive: !isActive },
+                {
+                    headers: {
+                        Authorization: token,
+                    },
+                }
+            );
+
+            const nextIsActive = Boolean(response.data?.zap?.isActive);
+            setZaps((prev) => prev.map((zap) => zap.id === zapId ? { ...zap, isActive: nextIsActive } : zap));
+            showToast({ type: "success", title: nextIsActive ? "Zap resumed" : "Zap paused" });
+        } catch (err: any) {
+            const message = err.response?.data?.message || err.message || "Failed to update zap status";
+            showToast({ type: "error", title: "Failed to update zap", description: message });
+        } finally {
+            setBusyStatusZapId(null);
+        }
+    };
+
+    const handleDuplicateZap = async (zapId: string) => {
+        setBusyDuplicateZapId(zapId);
+        try {
+            const token = getAuthToken();
+            const response = await axios.post(
+                `${BACKEND_URL}/api/v1/zap/${zapId}/duplicate`,
+                {},
+                {
+                    headers: {
+                        Authorization: token,
+                    },
+                }
+            );
+
+            const duplicatedZapId = response.data?.zapId;
+            showToast({
+                type: "success",
+                title: "Zap duplicated",
+                description: "New copy is created in paused state",
+            });
+
+            if (duplicatedZapId) {
+                router.push(`/zap/${duplicatedZapId}`);
+                return;
+            }
+
+            await fetchZaps();
+        } catch (err: any) {
+            const message = err.response?.data?.message || err.message || "Failed to duplicate zap";
+            showToast({ type: "error", title: "Failed to duplicate zap", description: message });
+        } finally {
+            setBusyDuplicateZapId(null);
+        }
+    };
+
     return (
         <div className="mt-10 lg:mt-14 flex justify-center">
             <div className="w-full max-w-7xl bg-white shadow-lg rounded-lg p-6">
@@ -132,7 +200,14 @@ export default function Dashboard() {
                 {loading ? (
                     <div className="text-center text-gray-500">Loading...</div>
                 ) : (
-                    <ZapsTable zaps={zaps} onDeleteZap={setPendingDeleteZapId} />
+                    <ZapsTable
+                        zaps={zaps}
+                        onDeleteZap={setPendingDeleteZapId}
+                        onToggleStatus={handleToggleZapStatus}
+                        onDuplicateZap={handleDuplicateZap}
+                        busyStatusZapId={busyStatusZapId}
+                        busyDuplicateZapId={busyDuplicateZapId}
+                    />
                 )}
             </div>
 
@@ -149,7 +224,21 @@ export default function Dashboard() {
     );
 }
 
-function ZapsTable({ zaps, onDeleteZap }: { zaps: Zap[]; onDeleteZap: (zapId: string) => void }) {
+function ZapsTable({
+    zaps,
+    onDeleteZap,
+    onToggleStatus,
+    onDuplicateZap,
+    busyStatusZapId,
+    busyDuplicateZapId,
+}: {
+    zaps: Zap[];
+    onDeleteZap: (zapId: string) => void;
+    onToggleStatus: (zapId: string, isActive: boolean) => void;
+    onDuplicateZap: (zapId: string) => void;
+    busyStatusZapId: string | null;
+    busyDuplicateZapId: string | null;
+}) {
     const router = useRouter();
     const userId = useUserId();
 
@@ -162,6 +251,7 @@ function ZapsTable({ zaps, onDeleteZap }: { zaps: Zap[]; onDeleteZap: (zapId: st
                         <th className="px-4 py-3">Actions</th>
                         <th className="px-4 py-3">ZapId</th>
                         <th className="px-4 py-3">Webhook URL</th>
+                        <th className="px-4 py-3">Status</th>
                         <th className="px-4 py-3">Created at</th>
                         <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
@@ -198,6 +288,11 @@ function ZapsTable({ zaps, onDeleteZap }: { zaps: Zap[]; onDeleteZap: (zapId: st
                                     {`${WEBHOOK_URL}/hooks/catch/${userId}/${zap.id}`}
                                 </td>
                                 <td className="px-4 py-2">
+                                    <span className={`rounded px-2 py-1 text-xs font-medium ${zap.isActive ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-700"}`}>
+                                        {zap.isActive ? "Active" : "Paused"}
+                                    </span>
+                                </td>
+                                <td className="px-4 py-2">
                                     {new Date(zap.createdAt).toLocaleString("en-GB", {
                                         day: "2-digit",
                                         month: "short",
@@ -209,6 +304,22 @@ function ZapsTable({ zaps, onDeleteZap }: { zaps: Zap[]; onDeleteZap: (zapId: st
                                 </td>
                                 <td className="px-4 text-right">
                                     <div className="flex justify-end gap-2">
+                                        <button
+                                            className="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                            onClick={() => onToggleStatus(zap.id, zap.isActive)}
+                                            disabled={busyStatusZapId === zap.id}
+                                            title={zap.isActive ? "Pause zap" : "Resume zap"}
+                                        >
+                                            {busyStatusZapId === zap.id ? "..." : zap.isActive ? "Pause" : "Resume"}
+                                        </button>
+                                        <button
+                                            className="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                            onClick={() => onDuplicateZap(zap.id)}
+                                            disabled={busyDuplicateZapId === zap.id}
+                                            title="Duplicate zap"
+                                        >
+                                            {busyDuplicateZapId === zap.id ? "..." : "Duplicate"}
+                                        </button>
                                         <button
                                             className="hover:text-blue-600 hover:cursor-pointer border border-gray-400 rounded-xl flex justify-center items-center p-1"
                                             onClick={() => {
@@ -231,7 +342,7 @@ function ZapsTable({ zaps, onDeleteZap }: { zaps: Zap[]; onDeleteZap: (zapId: st
                         ))
                     ) : (
                         <tr>
-                            <td colSpan={6} className="px-4 py-4 text-center text-gray-500">No zaps found.</td>
+                            <td colSpan={7} className="px-4 py-4 text-center text-gray-500">No zaps found.</td>
                         </tr>
                     )}
                 </tbody>

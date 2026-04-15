@@ -19,19 +19,24 @@ app.post("/hooks/catch/:userId/:zapId", async (req: Request, res: Response) => {
     const zapId = req.params.zapId
     const body = req.body
 
-    const zap = await client.zap.findFirst({
-      where: {
-        id: zapId,
-        userId: userId
-      },
-      select: {
-        id: true
-      }
-    })
+    const zapRows = await client.$queryRaw<Array<{ id: string; isActive: boolean }>>`
+      SELECT "id", "isActive"
+      FROM "Zap"
+      WHERE "id" = ${zapId} AND "userId" = ${userId}
+      LIMIT 1
+    `
+    const zap = zapRows[0]
 
     if (!zap) {
       res.status(404).json({
         message: "Zap not found"
+      })
+      return
+    }
+
+    if (!zap.isActive) {
+      res.status(200).json({
+        message: "zap is paused"
       })
       return
     }

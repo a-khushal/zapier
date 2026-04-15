@@ -3,7 +3,13 @@ dotenv.config({ path: "../.env" });
 
 import { Router } from "express";
 import { authMiddleWare } from "../middleware";
-import { TestPostWebhookSchema, ValidatePostWebhookMetadataSchema, ZapCreateSchema } from "../types";
+import {
+    TestPostWebhookSchema,
+    ValidatePostWebhookMetadataSchema,
+    ZapCreateSchema,
+    ZapStatusUpdateSchema,
+    ZapUpdateSchema,
+} from "../types";
 import { db } from "../db";
 import { ExtendedRequest } from "./userRouter";
 
@@ -58,6 +64,19 @@ function getRunStatusFromSteps(steps: Array<{ status: string }>) {
     return "PENDING";
 }
 
+function normalizeActionMetadata(availableActionId: string, actionMetadata: any) {
+    if (availableActionId !== "post_webhook") {
+        return actionMetadata || {};
+    }
+
+    const metadataParsed = ValidatePostWebhookMetadataSchema.safeParse(actionMetadata || {});
+    if (!metadataParsed.success) {
+        throw { status: 422, message: "Invalid post_webhook action metadata" };
+    }
+
+    return metadataParsed.data;
+}
+
 router.post("", authMiddleWare, async (req, res) => {
     try {
         const parsedResponse = ZapCreateSchema.safeParse(req.body);
@@ -68,24 +87,10 @@ router.post("", authMiddleWare, async (req, res) => {
         const extendedReq = req as ExtendedRequest;
         const userId = extendedReq.id;
 
-        const parsedActions = parsedResponse.data.actions.map((action) => {
-            if (action.availableActionId !== "post_webhook") {
-                return {
-                    ...action,
-                    actionMetadata: action.actionMetadata || {},
-                };
-            }
-
-            const metadataParsed = ValidatePostWebhookMetadataSchema.safeParse(action.actionMetadata || {});
-            if (!metadataParsed.success) {
-                throw { status: 422, message: "Invalid post_webhook action metadata" };
-            }
-
-            return {
-                ...action,
-                actionMetadata: metadataParsed.data,
-            };
-        });
+        const parsedActions = parsedResponse.data.actions.map((action) => ({
+            ...action,
+            actionMetadata: normalizeActionMetadata(action.availableActionId, action.actionMetadata),
+        }));
 
         const zapId = await db.$transaction(async (tx) => {
             const zap = await tx.zap.create({
@@ -415,6 +420,173 @@ router.get("/run/:zapRunId", authMiddleWare, async (req, res) => {
         res.status(200).json({ run: formattedRun });
     } catch (error: any) {
         console.error("Fetching zap run details error:", error);
+        res.status(error.status || 500).json({
+            message: error.message || "Internal server error",
+        });
+    }
+});
+
+router.put("/:zapId", authMiddleWare, async (req, res) => {
+    try {
+        const extendedReq = req as ExtendedRequest;
+        const userId = extendedReq.id;
+        const { zapId } = req.params;
+
+        const parsedResponse = ZapUpdateSchema.safeParse(req.body);
+        if (!parsedResponse.success) {
+            throw { status: 422, message: "Incorrect inputs" };
+        }
+
+        const zap = await db.zap.findFirst({
+            where: { id: zapId, userId },
+            include: {
+                actions: {
+                    select: {
+                        id: true,
+                        actionId: true,
+                    },
+                },
+            },
+        });
+
+        if (!zap) {
+            throw { status: 404, message: "Zap not found" };
+        }
+
+        const actionById = new Map(zap.actions.map((action) => [action.id, action]));
+
+        await db.$transaction(
+            parsedResponse.data.actions.map((actionUpdate) => {
+                const existingAction = actionById.get(actionUpdate.id);
+                if (!existingAction) {
+                    throw { status: 404, message: `Action ${actionUpdate.id} not found for this zap` };
+                }
+
+                const metadata = normalizeActionMetadata(existingAction.actionId, actionUpdate.actionMetadata);
+
+                return db.action.update({
+                    where: { id: actionUpdate.id },
+                    data: { metadata },
+                });
+            })
+        );
+
+        const updatedZap = await db.zap.findFirst({
+            where: { id: zapId, userId },
+            include: {
+                trigger: { include: { type: true } },
+                actions: { include: { type: true } },
+            },
+        });
+
+        res.status(200).json({ message: "Zap updated successfully", zap: updatedZap });
+    } catch (error: any) {
+        console.error("Updating zap error:", error);
+        res.status(error.status || 500).json({
+            message: error.message || "Internal server error",
+        });
+    }
+});
+
+router.patch("/:zapId/status", authMiddleWare, async (req, res) => {
+    try {
+        const extendedReq = req as ExtendedRequest;
+        const userId = extendedReq.id;
+        const { zapId } = req.params;
+
+        const parsedResponse = ZapStatusUpdateSchema.safeParse(req.body);
+        if (!parsedResponse.success) {
+            throw { status: 422, message: "Incorrect inputs" };
+        }
+
+        const zap = await db.zap.findFirst({
+            where: { id: zapId, userId },
+            select: { id: true },
+        });
+
+        if (!zap) {
+            throw { status: 404, message: "Zap not found" };
+        }
+
+        const updatedZap = await db.zap.update({
+            where: { id: zapId },
+            data: { isActive: parsedResponse.data.isActive },
+            select: { id: true, isActive: true },
+        });
+
+        res.status(200).json({
+            message: `Zap ${updatedZap.isActive ? "resumed" : "paused"} successfully`,
+            zap: updatedZap,
+        });
+    } catch (error: any) {
+        console.error("Updating zap status error:", error);
+        res.status(error.status || 500).json({
+            message: error.message || "Internal server error",
+        });
+    }
+});
+
+router.post("/:zapId/duplicate", authMiddleWare, async (req, res) => {
+    try {
+        const extendedReq = req as ExtendedRequest;
+        const userId = extendedReq.id;
+        const { zapId } = req.params;
+
+        const sourceZap = await db.zap.findFirst({
+            where: { id: zapId, userId },
+            include: {
+                trigger: true,
+                actions: {
+                    orderBy: { sortingOrder: "asc" },
+                },
+            },
+        });
+
+        if (!sourceZap || !sourceZap.trigger) {
+            throw { status: 404, message: "Zap not found" };
+        }
+
+        const sourceTrigger = sourceZap.trigger;
+
+        const duplicatedZapId = await db.$transaction(async (tx) => {
+            const newZap = await tx.zap.create({
+                data: {
+                    userId,
+                    triggerId: "",
+                    isActive: false,
+                },
+            });
+
+            for (const action of sourceZap.actions) {
+                await tx.action.create({
+                    data: {
+                        zapId: newZap.id,
+                        actionId: action.actionId,
+                        metadata: action.metadata as any,
+                        sortingOrder: action.sortingOrder,
+                    },
+                });
+            }
+
+            const newTrigger = await tx.trigger.create({
+                data: {
+                    triggerId: sourceTrigger.triggerId,
+                    zapId: newZap.id,
+                    metadata: sourceTrigger.metadata as any,
+                },
+            });
+
+            await tx.zap.update({
+                where: { id: newZap.id },
+                data: { triggerId: newTrigger.id },
+            });
+
+            return newZap.id;
+        });
+
+        res.status(200).json({ message: "Zap duplicated successfully", zapId: duplicatedZapId });
+    } catch (error: any) {
+        console.error("Duplicating zap error:", error);
         res.status(error.status || 500).json({
             message: error.message || "Internal server error",
         });

@@ -40,6 +40,17 @@ export const ZapCreateSchema = z.object({
     })),
 })
 
+export const ZapUpdateSchema = z.object({
+    actions: z.array(z.object({
+        id: z.string(),
+        actionMetadata: z.any().optional(),
+    })).min(1),
+});
+
+export const ZapStatusUpdateSchema = z.object({
+    isActive: z.boolean(),
+});
+
 const PostWebhookHeaderSchema = z.object({
     key: z.string().trim().min(1),
     value: z.string(),

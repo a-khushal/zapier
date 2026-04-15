@@ -21,15 +21,66 @@ type ActionType = {
   image: string;
 };
 
+type PostWebhookMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+type PostWebhookHeader = {
+  key: string;
+  value: string;
+};
+
+type PostWebhookMetadata = {
+  url: string;
+  method: PostWebhookMethod;
+  headers: PostWebhookHeader[];
+  bodyTemplate?: string;
+};
+
+const ALLOWED_METHODS: PostWebhookMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+
+function getDefaultPostWebhookMetadata(): PostWebhookMetadata {
+  return {
+    url: "",
+    method: "POST",
+    headers: [],
+    bodyTemplate: "",
+  };
+}
+
+function getPostWebhookMetadata(actionMetadata: Record<string, unknown> | undefined): PostWebhookMetadata {
+  const base = getDefaultPostWebhookMetadata();
+  if (!actionMetadata || typeof actionMetadata !== "object") {
+    return base;
+  }
+
+  const raw = actionMetadata as any;
+  const method = ALLOWED_METHODS.includes(raw.method) ? raw.method : "POST";
+  const headers: PostWebhookHeader[] = Array.isArray(raw.headers)
+    ? raw.headers.map((header: any) => ({
+      key: String(header?.key || ""),
+      value: String(header?.value || ""),
+    }))
+    : [];
+
+  return {
+    url: typeof raw.url === "string" ? raw.url : base.url,
+    method,
+    headers,
+    bodyTemplate: typeof raw.bodyTemplate === "string" ? raw.bodyTemplate : base.bodyTemplate,
+  };
+}
+
 type ZapDetail = {
   id: string;
+  isActive: boolean;
   trigger: {
     id: string;
     type: TriggerType;
   };
   actions: Array<{
     id: string;
+    actionId: string;
     sortingOrder: number;
+    metadata?: Record<string, unknown>;
     type: ActionType;
   }>;
   createdAt: string;
@@ -114,6 +165,9 @@ export default function ZapDetailPage() {
   const [runDetailsError, setRunDetailsError] = useState<string | null>(null);
   const [isTestPayloadModalOpen, setIsTestPayloadModalOpen] = useState(false);
   const [testPayloadInput, setTestPayloadInput] = useState('{"name":"Alice","event":"signup"}');
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editableActionMetadata, setEditableActionMetadata] = useState<Record<string, PostWebhookMetadata>>({});
 
   const getAuthHeader = () => {
     const token = localStorage.getItem("token");
@@ -254,6 +308,101 @@ export default function ZapDetailPage() {
     }
   };
 
+  const openEditModal = () => {
+    if (!zap) {
+      return;
+    }
+
+    const nextMetadata: Record<string, PostWebhookMetadata> = {};
+    for (const action of zap.actions) {
+      if (action.actionId !== "post_webhook") {
+        continue;
+      }
+      nextMetadata[action.id] = getPostWebhookMetadata(action.metadata);
+    }
+
+    if (Object.keys(nextMetadata).length === 0) {
+      showToast({ type: "info", title: "No post_webhook actions found to edit" });
+      return;
+    }
+
+    setEditableActionMetadata(nextMetadata);
+    setIsEditModalOpen(true);
+  };
+
+  const updateEditableMetadata = (
+    actionId: string,
+    updater: (current: PostWebhookMetadata) => PostWebhookMetadata
+  ) => {
+    setEditableActionMetadata((prev) => {
+      const current = prev[actionId] || getDefaultPostWebhookMetadata();
+      return {
+        ...prev,
+        [actionId]: updater(current),
+      };
+    });
+  };
+
+  const saveZapEdits = async () => {
+    if (!zapId) {
+      return;
+    }
+
+    const updates = Object.entries(editableActionMetadata);
+    if (updates.length === 0) {
+      showToast({ type: "error", title: "No actions to update" });
+      return;
+    }
+
+    for (const [actionId, metadata] of updates) {
+      if (!metadata.url.trim()) {
+        showToast({ type: "error", title: `Action ${actionId.slice(0, 6)}: URL is required` });
+        return;
+      }
+    }
+
+    setIsSavingEdit(true);
+    try {
+      await axios.put(
+        `${BACKEND_URL}/api/v1/zap/${zapId}`,
+        {
+          actions: updates.map(([actionId, metadata]) => ({
+            id: actionId,
+            actionMetadata: metadata,
+          })),
+        },
+        {
+          headers: {
+            ...getAuthHeader(),
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      setZap((prev) => {
+        if (!prev) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          actions: prev.actions.map((action) =>
+            editableActionMetadata[action.id]
+              ? { ...action, metadata: editableActionMetadata[action.id] }
+              : action
+          ),
+        };
+      });
+      setIsEditModalOpen(false);
+      showToast({ type: "success", title: "Zap updated successfully" });
+    } catch (err: any) {
+      const message = err.response?.data?.message || err.message || "Failed to update zap";
+      showToast({ type: "error", title: "Failed to update zap", description: message });
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
   if (loading) {
     return <div className="p-8 text-gray-600">Loading zap...</div>;
   }
@@ -281,6 +430,12 @@ export default function ZapDetailPage() {
 
         <div className="space-y-2 text-sm text-gray-700">
           <p><span className="font-semibold">Zap ID:</span> {zap.id}</p>
+          <p>
+            <span className="font-semibold">Status:</span>{" "}
+            <span className={`rounded px-2 py-1 text-xs font-medium ${zap.isActive ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-700"}`}>
+              {zap.isActive ? "Active" : "Paused"}
+            </span>
+          </p>
           <p><span className="font-semibold">Trigger:</span> {zap.trigger.type.name}</p>
           <p>
             <span className="font-semibold">Actions:</span>{" "}
@@ -295,7 +450,7 @@ export default function ZapDetailPage() {
           </p>
         </div>
 
-        <div className="mt-6">
+        <div className="mt-6 flex flex-wrap gap-2">
           <button
             onClick={handleSendTestEvent}
             disabled={isTesting || !webhookUrl}
@@ -306,6 +461,12 @@ export default function ZapDetailPage() {
             }`}
           >
             {isTesting ? "Sending..." : "Send Test Event"}
+          </button>
+          <button
+            onClick={openEditModal}
+            className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Edit Actions
           </button>
         </div>
 
@@ -477,6 +638,174 @@ export default function ZapDetailPage() {
         onClose={() => setIsTestPayloadModalOpen(false)}
         onConfirm={submitTestEvent}
       />
+
+      {isEditModalOpen && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/45 p-4"
+          onClick={() => setIsEditModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-3xl max-h-[90vh] overflow-auto rounded-lg border border-gray-200 bg-white p-5 shadow-lg"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-base font-semibold text-gray-900">Edit Post Webhook Actions</h3>
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              {Object.entries(editableActionMetadata).map(([actionId, metadata], index) => (
+                <div key={actionId} className="rounded border border-gray-200 p-3">
+                  <p className="text-sm font-semibold text-gray-800">Step {index + 1}</p>
+
+                  <div className="mt-2">
+                    <label className="block text-xs font-medium text-gray-600">URL</label>
+                    <input
+                      type="text"
+                      value={metadata.url}
+                      onChange={(e) =>
+                        updateEditableMetadata(actionId, (current) => ({
+                          ...current,
+                          url: e.target.value,
+                        }))
+                      }
+                      className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                    />
+                  </div>
+
+                  <div className="mt-2">
+                    <label className="block text-xs font-medium text-gray-600">Method</label>
+                    <select
+                      value={metadata.method}
+                      onChange={(e) =>
+                        updateEditableMetadata(actionId, (current) => ({
+                          ...current,
+                          method: e.target.value as PostWebhookMethod,
+                        }))
+                      }
+                      className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                    >
+                      {ALLOWED_METHODS.map((method) => (
+                        <option key={method} value={method}>
+                          {method}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="mt-2">
+                    <label className="block text-xs font-medium text-gray-600">Body Template (JSON)</label>
+                    <textarea
+                      rows={3}
+                      value={metadata.bodyTemplate || ""}
+                      onChange={(e) =>
+                        updateEditableMetadata(actionId, (current) => ({
+                          ...current,
+                          bodyTemplate: e.target.value,
+                        }))
+                      }
+                      className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                    />
+                  </div>
+
+                  <div className="mt-2">
+                    <label className="block text-xs font-medium text-gray-600">Headers</label>
+                    <div className="mt-1 space-y-1">
+                      {metadata.headers.map((header, headerIndex) => (
+                        <div key={headerIndex} className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={header.key}
+                            onChange={(e) =>
+                              updateEditableMetadata(actionId, (current) => {
+                                const nextHeaders = [...current.headers];
+                                nextHeaders[headerIndex] = {
+                                  ...nextHeaders[headerIndex],
+                                  key: e.target.value,
+                                };
+                                return {
+                                  ...current,
+                                  headers: nextHeaders,
+                                };
+                              })
+                            }
+                            placeholder="Key"
+                            className="w-[45%] rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <input
+                            type="text"
+                            value={header.value}
+                            onChange={(e) =>
+                              updateEditableMetadata(actionId, (current) => {
+                                const nextHeaders = [...current.headers];
+                                nextHeaders[headerIndex] = {
+                                  ...nextHeaders[headerIndex],
+                                  value: e.target.value,
+                                };
+                                return {
+                                  ...current,
+                                  headers: nextHeaders,
+                                };
+                              })
+                            }
+                            placeholder="Value"
+                            className="w-[45%] rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <button
+                            onClick={() =>
+                              updateEditableMetadata(actionId, (current) => ({
+                                ...current,
+                                headers: current.headers.filter((_, indexToKeep) => indexToKeep !== headerIndex),
+                              }))
+                            }
+                            className="flex h-7 w-7 items-center justify-center rounded border border-gray-300 text-sm leading-none text-gray-500 hover:border-red-300 hover:text-red-500"
+                          >
+                            x
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() =>
+                        updateEditableMetadata(actionId, (current) => ({
+                          ...current,
+                          headers: [...current.headers, { key: "", value: "" }],
+                        }))
+                      }
+                      className="mt-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      + Add Header
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveZapEdits}
+                  disabled={isSavingEdit}
+                  className={`rounded px-3 py-1.5 text-xs font-medium ${
+                    isSavingEdit ? "cursor-not-allowed bg-gray-300 text-gray-600" : "bg-[#ff4f00] text-white hover:bg-[#ff4f00]/90"
+                  }`}
+                >
+                  {isSavingEdit ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
