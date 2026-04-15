@@ -421,6 +421,53 @@ router.get("/run/:zapRunId", authMiddleWare, async (req, res) => {
     }
 });
 
+router.delete("/:zapId", authMiddleWare, async (req, res) => {
+    try {
+        const extendedReq = req as ExtendedRequest;
+        const userId = extendedReq.id;
+        const { zapId } = req.params;
+
+        const zap = await db.zap.findFirst({
+            where: { id: zapId, userId },
+            select: { id: true },
+        });
+
+        if (!zap) {
+            throw { status: 404, message: "Zap not found" };
+        }
+
+        await db.$transaction(async (tx) => {
+            const runs = await tx.zapRun.findMany({
+                where: { zapId },
+                select: { id: true },
+            });
+
+            const runIds = runs.map((run) => run.id);
+
+            if (runIds.length > 0) {
+                await tx.zapRunOutbox.deleteMany({
+                    where: { zapRunId: { in: runIds } },
+                });
+
+                await tx.zapRun.deleteMany({
+                    where: { id: { in: runIds } },
+                });
+            }
+
+            await tx.action.deleteMany({ where: { zapId } });
+            await tx.trigger.deleteMany({ where: { zapId } });
+            await tx.zap.delete({ where: { id: zapId } });
+        });
+
+        res.status(200).json({ message: "Zap deleted successfully" });
+    } catch (error: any) {
+        console.error("Deleting zap error:", error);
+        res.status(error.status || 500).json({
+            message: error.message || "Internal server error",
+        });
+    }
+});
+
 router.get("/:zapId", authMiddleWare, async (req, res) => {
     try {
         const extendedReq = req as ExtendedRequest;

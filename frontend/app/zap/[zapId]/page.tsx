@@ -6,6 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserId } from "@/hooks/useUserId";
 import { BACKEND_URL, WEBHOOK_URL } from "@/config";
+import JsonPayloadModal from "@/components/JsonPayloadModal";
+import { useToast } from "@/components/ToastProvider";
 
 type TriggerType = {
   id: string;
@@ -92,6 +94,7 @@ type RunDetail = {
 
 export default function ZapDetailPage() {
   useAuth();
+  const { showToast } = useToast();
   const params = useParams<{ zapId: string }>();
   const router = useRouter();
   const userId = useUserId();
@@ -109,6 +112,8 @@ export default function ZapDetailPage() {
   const [selectedRun, setSelectedRun] = useState<RunDetail | null>(null);
   const [runDetailsLoading, setRunDetailsLoading] = useState(false);
   const [runDetailsError, setRunDetailsError] = useState<string | null>(null);
+  const [isTestPayloadModalOpen, setIsTestPayloadModalOpen] = useState(false);
+  const [testPayloadInput, setTestPayloadInput] = useState('{"name":"Alice","event":"signup"}');
 
   const getAuthHeader = () => {
     const token = localStorage.getItem("token");
@@ -199,24 +204,26 @@ export default function ZapDetailPage() {
   const handleSendTestEvent = async () => {
     if (!webhookUrl) {
       setTestResult("Webhook URL is not available yet");
+      showToast({ type: "error", title: "Webhook URL is not available yet" });
       return;
     }
 
-    const payloadInput = window.prompt(
-      "Enter test payload JSON",
-      "{\"name\":\"Alice\",\"event\":\"signup\"}"
-    );
+    setTestPayloadInput('{"name":"Alice","event":"signup"}');
+    setIsTestPayloadModalOpen(true);
+  };
 
-    if (!payloadInput || !payloadInput.trim()) {
-      setTestResult("Test cancelled");
+  const submitTestEvent = async () => {
+    if (!testPayloadInput.trim()) {
+      showToast({ type: "error", title: "Test payload JSON is required" });
       return;
     }
 
     let payload: any;
     try {
-      payload = JSON.parse(payloadInput);
+      payload = JSON.parse(testPayloadInput);
     } catch {
       setTestResult("Invalid JSON payload");
+      showToast({ type: "error", title: "Invalid JSON payload" });
       return;
     }
 
@@ -233,12 +240,15 @@ export default function ZapDetailPage() {
       setTestResult(
         `Sent successfully (status ${response.status}): ${JSON.stringify(response.data)}`
       );
+      showToast({ type: "success", title: "Test event sent", description: `HTTP ${response.status}` });
+      setIsTestPayloadModalOpen(false);
       fetchRuns();
     } catch (err: any) {
       const status = err.response?.status;
       const message =
         err.response?.data?.message || err.message || "Failed to send test event";
       setTestResult(status ? `Failed (status ${status}): ${message}` : `Failed: ${message}`);
+      showToast({ type: "error", title: "Failed to send test event", description: message });
     } finally {
       setIsTesting(false);
     }
@@ -455,6 +465,18 @@ export default function ZapDetailPage() {
           )}
         </div>
       )}
+
+      <JsonPayloadModal
+        isOpen={isTestPayloadModalOpen}
+        title="Send Test Event"
+        description="Enter the trigger payload to send to this zap."
+        value={testPayloadInput}
+        confirmLabel="Send"
+        isSubmitting={isTesting}
+        onChange={setTestPayloadInput}
+        onClose={() => setIsTestPayloadModalOpen(false)}
+        onConfirm={submitTestEvent}
+      />
     </div>
   );
 }

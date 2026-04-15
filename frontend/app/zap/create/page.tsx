@@ -16,6 +16,9 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 import WorkflowNode from "@/components/WorkflowNode";
 import Modal, { ModalItem } from "@/components/Modal";
+import JsonPayloadModal from "@/components/JsonPayloadModal";
+import ConfirmModal from "@/components/ConfirmModal";
+import { useToast } from "@/components/ToastProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { useTriggerAction, TriggerActionRes as BaseTriggerActionRes } from "@/hooks/useTriggerAction";
 import { useCreateZap } from "@/hooks/useCreateZap";
@@ -108,6 +111,7 @@ const initialEdges: Edge[] = [
 
 function App() {
   useAuth();
+  const { showToast } = useToast();
   const { loading, availableTriggers, availableActions } = useTriggerAction();
   const { createZap, isLoading: isPublishing } = useCreateZap();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -120,6 +124,11 @@ function App() {
   const [selectedActions, setSelectedActions] = useState<TriggerActionRes[]>([]);
   const [actionTestResults, setActionTestResults] = useState<Record<string, ActionTestResult>>({});
   const [isActionConfigOpen, setIsActionConfigOpen] = useState(false);
+  const [isTestPayloadModalOpen, setIsTestPayloadModalOpen] = useState(false);
+  const [testPayloadInput, setTestPayloadInput] = useState('{"name":"Alice","event":"signup"}');
+  const [pendingTestAction, setPendingTestAction] = useState<TriggerActionRes | null>(null);
+  const [isTestingAction, setIsTestingAction] = useState(false);
+  const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false);
 
   const handleNodeClick = (nodeId: string) => {
     setSelectedNodeId(nodeId);
@@ -405,42 +414,54 @@ function App() {
     );
   };
 
-  const handleTestAction = async (action: TriggerActionRes) => {
+  const handleTestAction = (action: TriggerActionRes) => {
     if (action.id !== "post_webhook") {
-      alert("Test Action is only available for post_webhook");
+      showToast({ type: "info", title: "Test Action is only available for post_webhook" });
       return;
     }
 
     if (!action.actionMetadata) {
-      alert("Configure this action first");
+      showToast({ type: "error", title: "Configure this action first" });
       return;
     }
 
     const normalizedMetadata = getPostWebhookMetadata(action.actionMetadata);
     if (!normalizedMetadata.url.trim()) {
-      alert("Webhook URL is required");
+      showToast({ type: "error", title: "Webhook URL is required" });
       return;
     }
 
-    const payloadInput = window.prompt(
-      "Enter sample payload JSON for test run",
-      "{\"name\":\"Alice\",\"event\":\"signup\"}"
-    );
+    if (!isValidHttpUrl(normalizedMetadata.url.trim())) {
+      showToast({ type: "error", title: "Webhook URL must be a valid http/https URL" });
+      return;
+    }
 
-    if (!payloadInput || !payloadInput.trim()) {
-      alert("Sample payload is required");
+    setPendingTestAction(action);
+    setTestPayloadInput('{"name":"Alice","event":"signup"}');
+    setIsTestPayloadModalOpen(true);
+  };
+
+  const runPendingTestAction = async () => {
+    if (!pendingTestAction) {
+      return;
+    }
+
+    if (!testPayloadInput.trim()) {
+      showToast({ type: "error", title: "Sample payload is required" });
       return;
     }
 
     let samplePayload: any;
     try {
-      samplePayload = JSON.parse(payloadInput);
+      samplePayload = JSON.parse(testPayloadInput);
     } catch {
-      alert("Invalid sample payload JSON");
+      showToast({ type: "error", title: "Invalid sample payload JSON" });
       return;
     }
 
-    const testKey = action.nodeId || action.id;
+    const normalizedMetadata = getPostWebhookMetadata(pendingTestAction.actionMetadata);
+    const testKey = pendingTestAction.nodeId || pendingTestAction.id;
+    setIsTestingAction(true);
     setActionTestResults((prev) => ({
       ...prev,
       [testKey]: { isLoading: true },
@@ -476,6 +497,12 @@ function App() {
           error: response.data.error,
         },
       }));
+      setIsTestPayloadModalOpen(false);
+      showToast({
+        type: response.data.ok ? "success" : "error",
+        title: response.data.ok ? "Action test completed" : "Action test failed",
+        description: typeof response.data.responseStatus === "number" ? `HTTP ${response.data.responseStatus}` : undefined,
+      });
     } catch (err: any) {
       const message = err.response?.data?.message || err.message || "Failed to test action";
       setActionTestResults((prev) => ({
@@ -485,21 +512,31 @@ function App() {
           error: message,
         },
       }));
+      showToast({ type: "error", title: "Failed to test action", description: message });
+    } finally {
+      setIsTestingAction(false);
     }
   };
 
-  const handlePublish = async () => {
+  const handlePublish = () => {
     if (!selectedTrigger) {
-      alert('Please select a trigger first');
+      showToast({ type: "error", title: "Please select a trigger first" });
       return;
     }
 
     if (selectedActions.length === 0) {
-      alert('Please add at least one action');
+      showToast({ type: "error", title: "Please add at least one action" });
       return;
     }
 
-    if (!confirm('Are you sure you want to publish this Zap?')) {
+    setIsPublishConfirmOpen(true);
+  };
+
+  const confirmPublish = async () => {
+    setIsPublishConfirmOpen(false);
+
+    if (!selectedTrigger) {
+      showToast({ type: "error", title: "Please select a trigger first" });
       return;
     }
 
@@ -515,12 +552,12 @@ function App() {
 
         const metadata = getPostWebhookMetadata(action.actionMetadata);
         if (!metadata.url.trim()) {
-          alert(`Step ${action.nodeId || "-"}: URL is required`);
+          showToast({ type: "error", title: `Step ${action.nodeId || "-"}: URL is required` });
           return;
         }
 
         if (!isValidHttpUrl(metadata.url.trim())) {
-          alert(`Step ${action.nodeId || "-"}: URL must be a valid http/https URL`);
+          showToast({ type: "error", title: `Step ${action.nodeId || "-"}: URL must be a valid http/https URL` });
           return;
         }
       }
@@ -536,10 +573,10 @@ function App() {
         }))
       };
       await createZap(zapData);
-      alert('Zap created successfully!');
+      showToast({ type: "success", title: "Zap created successfully" });
     } catch (error) {
       console.error('Failed to create Zap:', error);
-      alert('Failed to create Zap. Please try again.');
+      showToast({ type: "error", title: "Failed to create Zap", description: "Please try again." });
     }
   };
 
@@ -826,6 +863,28 @@ function App() {
           </div>
         </div>
       </Modal>
+
+      <JsonPayloadModal
+        isOpen={isTestPayloadModalOpen}
+        title="Test Action Payload"
+        description="Enter sample JSON payload to test this action."
+        value={testPayloadInput}
+        confirmLabel="Run Test"
+        isSubmitting={isTestingAction}
+        onChange={setTestPayloadInput}
+        onClose={() => setIsTestPayloadModalOpen(false)}
+        onConfirm={runPendingTestAction}
+      />
+
+      <ConfirmModal
+        isOpen={isPublishConfirmOpen}
+        title="Publish this Zap?"
+        description="This will make your Zap active and ready to receive trigger events."
+        confirmLabel="Publish"
+        isSubmitting={isPublishing}
+        onCancel={() => setIsPublishConfirmOpen(false)}
+        onConfirm={confirmPublish}
+      />
     </div>
   );
 }

@@ -1,12 +1,14 @@
 "use client"
 
 import axios from "axios";
-import { ChevronRight, PlusIcon } from "lucide-react";
+import { ChevronRight, PlusIcon, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { BACKEND_URL, WEBHOOK_URL } from "@/config";
 import { useUserId } from "@/hooks/useUserId";
+import ConfirmModal from "@/components/ConfirmModal";
+import { useToast } from "@/components/ToastProvider";
 
 type TriggerType = {
     id: string;
@@ -49,38 +51,71 @@ function useZaps() {
     const [loading, setLoading] = useState(true);
     const [zaps, setZaps] = useState<Zap[]>([]);
 
-    useEffect(() => {
-        const fetchZaps = async () => {
-            try {
-                const token = localStorage.getItem("token");
-                if (!token) {
-                    console.error("No token found in localStorage");
-                    return;
-                }
-
-                const response = await axios.get(`${BACKEND_URL}/api/v1/zap`, {
-                    headers: {
-                        Authorization: localStorage.getItem("token") as string
-                    }
-                });
-
-                setZaps(response.data.zaps);
-                setLoading(false);
-            } catch (error) {
-                console.error(error);
+    const fetchZaps = async () => {
+        try {
+            const token = localStorage.getItem("token");
+            if (!token) {
+                console.error("No token found in localStorage");
+                return;
             }
-        };
 
+            const response = await axios.get(`${BACKEND_URL}/api/v1/zap`, {
+                headers: {
+                    Authorization: token
+                }
+            });
+
+            setZaps(response.data.zaps);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
         fetchZaps();
     }, []);
 
-    return { loading, zaps };
+    return { loading, zaps, setZaps, fetchZaps };
 }
 
 export default function Dashboard() {
     useAuth();
-    const { loading, zaps } = useZaps();
+    const { loading, zaps, setZaps } = useZaps();
+    const { showToast } = useToast();
     const router = useRouter()
+    const [pendingDeleteZapId, setPendingDeleteZapId] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    const handleDeleteZap = async () => {
+        if (!pendingDeleteZapId) {
+            return;
+        }
+
+        setIsDeleting(true);
+        try {
+            const token = localStorage.getItem("token");
+            if (!token) {
+                throw new Error("No authentication token found");
+            }
+
+            await axios.delete(`${BACKEND_URL}/api/v1/zap/${pendingDeleteZapId}`, {
+                headers: {
+                    Authorization: token,
+                },
+            });
+
+            setZaps((prev) => prev.filter((zap) => zap.id !== pendingDeleteZapId));
+            showToast({ type: "success", title: "Zap deleted" });
+            setPendingDeleteZapId(null);
+        } catch (err: any) {
+            const message = err.response?.data?.message || err.message || "Failed to delete zap";
+            showToast({ type: "error", title: "Failed to delete zap", description: message });
+        } finally {
+            setIsDeleting(false);
+        }
+    };
 
     return (
         <div className="mt-10 lg:mt-14 flex justify-center">
@@ -97,14 +132,24 @@ export default function Dashboard() {
                 {loading ? (
                     <div className="text-center text-gray-500">Loading...</div>
                 ) : (
-                    <ZapsTable zaps={zaps} />
+                    <ZapsTable zaps={zaps} onDeleteZap={setPendingDeleteZapId} />
                 )}
             </div>
+
+            <ConfirmModal
+                isOpen={!!pendingDeleteZapId}
+                title="Delete this Zap?"
+                description="This removes the zap and its runs permanently."
+                confirmLabel="Delete"
+                isSubmitting={isDeleting}
+                onCancel={() => setPendingDeleteZapId(null)}
+                onConfirm={handleDeleteZap}
+            />
         </div>
     );
 }
 
-function ZapsTable({ zaps }: { zaps: Zap[] }) {
+function ZapsTable({ zaps, onDeleteZap }: { zaps: Zap[]; onDeleteZap: (zapId: string) => void }) {
     const router = useRouter();
     const userId = useUserId();
 
@@ -118,13 +163,13 @@ function ZapsTable({ zaps }: { zaps: Zap[] }) {
                         <th className="px-4 py-3">ZapId</th>
                         <th className="px-4 py-3">Webhook URL</th>
                         <th className="px-4 py-3">Created at</th>
-                        <th className="px-4 py-3 text-right"></th>
+                        <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {zaps.length > 0 ? (
-                        zaps.map((zap, index) => (
-                            <tr key={index} className="border-b hover:bg-gray-50">
+                        zaps.map((zap) => (
+                            <tr key={zap.id} className="border-b hover:bg-gray-50">
                                 <td className="px-4 py-2">
                                     <div className="flex justify-start">
                                         <img
@@ -163,20 +208,30 @@ function ZapsTable({ zaps }: { zaps: Zap[] }) {
                                     })}
                                 </td>
                                 <td className="px-4 text-right">
-                                    <div
-                                        className="hover:text-blue-600 hover:cursor-pointer border border-gray-400 rounded-xl flex justify-center items-center"
-                                        onClick={() => {
-                                            router.push(`/zap/${zap.id}`)
-                                        }}
-                                    >
-                                        <ChevronRight className="w-6 h-6" />
+                                    <div className="flex justify-end gap-2">
+                                        <button
+                                            className="hover:text-blue-600 hover:cursor-pointer border border-gray-400 rounded-xl flex justify-center items-center p-1"
+                                            onClick={() => {
+                                                router.push(`/zap/${zap.id}`)
+                                            }}
+                                            title="View zap details"
+                                        >
+                                            <ChevronRight className="w-6 h-6" />
+                                        </button>
+                                        <button
+                                            className="border border-red-200 text-red-600 rounded-xl flex justify-center items-center p-1 hover:bg-red-50"
+                                            onClick={() => onDeleteZap(zap.id)}
+                                            title="Delete zap"
+                                        >
+                                            <Trash2 className="w-5 h-5" />
+                                        </button>
                                     </div>
                                 </td>
                             </tr>
                         ))
                     ) : (
                         <tr>
-                            <td colSpan={4} className="px-4 py-4 text-center text-gray-500">No zaps found.</td>
+                            <td colSpan={6} className="px-4 py-4 text-center text-gray-500">No zaps found.</td>
                         </tr>
                     )}
                 </tbody>
