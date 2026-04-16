@@ -65,6 +65,16 @@ type TriggerTemplatePreset = {
   payload: Record<string, unknown>;
 };
 
+type BuilderTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  triggerId: string;
+  actionId: string;
+  actionMetadata: Record<string, unknown>;
+  triggerPresetId: string;
+};
+
 const NODE_VERTICAL_GAP = 170;
 
 const ALLOWED_METHODS: PostWebhookMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
@@ -119,6 +129,38 @@ const WEBHOOK_TRIGGER_PRESETS: TriggerTemplatePreset[] = [
       },
       timestamp: "2026-04-16T00:00:00.000Z",
     },
+  },
+];
+
+const BUILDER_TEMPLATES: BuilderTemplate[] = [
+  {
+    id: "webhook-to-slack",
+    name: "Webhook -> Slack Alert",
+    description: "Receive webhook events and post a formatted alert to Slack.",
+    triggerId: "webhook_catch",
+    actionId: "send_slack",
+    actionMetadata: {
+      webhookUrl: "",
+      messageTemplate: "New event: {{payload.event}} for {{payload.user.name}}",
+      username: "Synq Bot",
+      iconEmoji: ":zap:",
+      channel: "",
+    },
+    triggerPresetId: "signup",
+  },
+  {
+    id: "webhook-to-webhook",
+    name: "Webhook -> Webhook",
+    description: "Forward incoming webhook payloads to another endpoint.",
+    triggerId: "webhook_catch",
+    actionId: "post_webhook",
+    actionMetadata: {
+      url: "",
+      method: "POST",
+      headers: [],
+      bodyTemplate: "",
+    },
+    triggerPresetId: "order_created",
   },
 ];
 
@@ -238,7 +280,7 @@ const initialEdges: Edge[] = [
 function App() {
   useAuth();
   const { showToast } = useToast();
-  const { loading, availableTriggers, availableActions } = useTriggerAction();
+  const { loading, error: triggerActionError, availableTriggers, availableActions } = useTriggerAction();
   const { createZap, isLoading: isPublishing } = useCreateZap();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -258,6 +300,7 @@ function App() {
   const [disabledActionNodeIds, setDisabledActionNodeIds] = useState<string[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [selectedTriggerTemplateId, setSelectedTriggerTemplateId] = useState<string>(WEBHOOK_TRIGGER_PRESETS[0].id);
+  const [applyingTemplateId, setApplyingTemplateId] = useState<string | null>(null);
 
   const markDirty = useCallback(() => {
     setHasUnsavedChanges(true);
@@ -284,7 +327,7 @@ function App() {
     }
 
     const existingAction = selectedActions.find((action) => action.nodeId === nodeId);
-    if (existingAction?.id === "post_webhook") {
+    if (existingAction?.id === "post_webhook" || existingAction?.id === "send_slack") {
       setIsModalOpen(false);
       setIsActionConfigOpen(true);
       return;
@@ -367,6 +410,88 @@ function App() {
       ),
     [setEdges]
   );
+
+  const applyBuilderTemplate = useCallback((template: BuilderTemplate) => {
+    if (loading) {
+      showToast({ type: "info", title: "Still loading actions and triggers" });
+      return;
+    }
+
+    const trigger = availableTriggers.find((item) => item.id === template.triggerId);
+    const action = availableActions.find((item) => item.id === template.actionId);
+
+    if (!trigger || !action) {
+      showToast({
+        type: "error",
+        title: "Template unavailable",
+        description: "Required trigger/action is missing from available apps.",
+      });
+      return;
+    }
+
+    const triggerNode: Node = {
+      id: "1",
+      type: "workflowNode",
+      position: {
+        x: window.innerWidth / 2 - 125,
+        y: window.innerHeight / 2 - 416,
+      },
+      data: {
+        icon: trigger.image,
+        title: trigger.name,
+        subtitle: "1. Select the trigger for your Zap to run",
+        type: "trigger",
+        appId: trigger.id,
+      },
+    };
+
+    const actionNode: Node = {
+      id: "2",
+      type: "workflowNode",
+      position: {
+        x: triggerNode.position.x,
+        y: triggerNode.position.y + NODE_VERTICAL_GAP,
+      },
+      data: {
+        icon: action.image,
+        title: action.name,
+        subtitle: "2. Select the event for your Zap to run",
+        type: "action",
+        appId: action.id,
+      },
+    };
+
+    setApplyingTemplateId(template.id);
+    setNodes(normalizeActionNodesLayout([triggerNode, actionNode]));
+    setEdges([
+      {
+        id: "e1-2",
+        source: "1",
+        target: "2",
+        type: "default",
+        style: { stroke: "#d1d5db", strokeWidth: 1.2 },
+      },
+    ]);
+    setSelectedTrigger(trigger);
+    setSelectedActions([
+      {
+        ...action,
+        nodeId: "2",
+        actionMetadata: template.actionId === "send_slack"
+          ? getSlackWebhookMetadata(template.actionMetadata)
+          : getPostWebhookMetadata(template.actionMetadata),
+      },
+    ]);
+    setSelectedTriggerTemplateId(template.triggerPresetId);
+    setDisabledActionNodeIds([]);
+    setSelectedNodeId("2");
+    setIsActionConfigOpen(true);
+    setIsModalOpen(false);
+    setNodeIdCounter(3);
+    markDirty();
+    showToast({ type: "success", title: `Template applied: ${template.name}` });
+    setTimeout(() => setApplyingTemplateId(null), 0);
+  }, [availableActions, availableTriggers, loading, markDirty, setEdges, setNodes, showToast]);
 
   useEffect(() => {
     const nodeWidth = 250;
@@ -1011,8 +1136,41 @@ function App() {
         <Controls />
       </ReactFlow>
 
+      <div className="fixed left-10 top-[94px] z-50 w-[380px] rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="text-sm font-semibold text-gray-900">Create from template</h3>
+        <p className="mt-1 text-xs text-gray-600">Start with a ready flow and tweak only what you need.</p>
+
+        {loading && (
+          <div className="mt-3 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600">
+            Loading triggers/actions...
+          </div>
+        )}
+
+        {triggerActionError && (
+          <div className="mt-3 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">
+            {triggerActionError}
+          </div>
+        )}
+
+        <div className="mt-3 space-y-2">
+          {BUILDER_TEMPLATES.map((template) => (
+            <button
+              key={template.id}
+              onClick={() => applyBuilderTemplate(template)}
+              disabled={loading || applyingTemplateId === template.id}
+              className="w-full rounded border border-gray-200 bg-white p-2 text-left hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <p className="text-xs font-semibold text-gray-900">
+                {applyingTemplateId === template.id ? "Applying..." : template.name}
+              </p>
+              <p className="mt-0.5 text-[11px] text-gray-600">{template.description}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {selectedTrigger?.id === "webhook_catch" && (
-        <div className="fixed left-10 top-[94px] z-50 w-[380px] rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="fixed left-10 top-[356px] z-50 w-[380px] rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <h3 className="text-sm font-semibold text-gray-900">Webhook Trigger Template</h3>
           <p className="mt-1 text-xs text-gray-600">
             Pick a sample payload preset to speed up testing and onboarding.

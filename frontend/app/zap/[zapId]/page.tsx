@@ -108,6 +108,12 @@ type RunStatusFilter = "ALL" | "SUCCESS" | "FAILED" | "PENDING";
 const RUN_STATUS_FILTERS: RunStatusFilter[] = ["ALL", "SUCCESS", "FAILED", "PENDING"];
 const RUNS_PAGE_SIZE = 10;
 
+type TestPayloadPreset = {
+  id: string;
+  label: string;
+  payload: Record<string, unknown>;
+};
+
 type RunAttempt = {
   id: string;
   attemptNumber: number;
@@ -323,6 +329,62 @@ export default function ZapDetailPage() {
     return `${WEBHOOK_URL}/hooks/catch/${userId}/${zapId}`;
   }, [userId, zapId]);
 
+  const testPayloadPresets = useMemo<TestPayloadPreset[]>(() => {
+    const triggerPresetPayload = zap?.trigger?.metadata?.samplePayload;
+    const defaults: TestPayloadPreset[] = [
+      {
+        id: "signup",
+        label: "Signup",
+        payload: { event: "user.signup", user: { name: "Alice", email: "alice@example.com" } },
+      },
+      {
+        id: "payment",
+        label: "Payment",
+        payload: { event: "payment.captured", payment: { id: "pay_123", amount: 1499 } },
+      },
+      {
+        id: "order",
+        label: "Order",
+        payload: { event: "order.created", order: { id: "ord_123", total: 2499 } },
+      },
+    ];
+
+    if (triggerPresetPayload && typeof triggerPresetPayload === "object") {
+      return [
+        {
+          id: "trigger-template",
+          label: "Trigger Template",
+          payload: triggerPresetPayload,
+        },
+        ...defaults,
+      ];
+    }
+
+    return defaults;
+  }, [zap]);
+
+  const applyPayloadPreset = (presetId: string) => {
+    const preset = testPayloadPresets.find((item) => item.id === presetId);
+    if (!preset) {
+      return;
+    }
+    setTestPayloadInput(JSON.stringify(preset.payload, null, 2));
+    showToast({ type: "success", title: `Preset applied: ${preset.label}` });
+  };
+
+  const copyWebhookUrl = async () => {
+    if (!webhookUrl) {
+      showToast({ type: "error", title: "Webhook URL unavailable" });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      showToast({ type: "success", title: "Webhook URL copied" });
+    } catch {
+      showToast({ type: "error", title: "Failed to copy webhook URL" });
+    }
+  };
+
   const handleSendTestEvent = async () => {
     if (!webhookUrl) {
       setTestResult("Webhook URL is not available yet");
@@ -330,7 +392,7 @@ export default function ZapDetailPage() {
       return;
     }
 
-    const defaultPayload = zap?.trigger?.metadata?.samplePayload || { name: "Alice", event: "signup" };
+    const defaultPayload = testPayloadPresets[0]?.payload || { name: "Alice", event: "signup" };
     setTestPayloadInput(JSON.stringify(defaultPayload, null, 2));
     setIsTestPayloadModalOpen(true);
   };
@@ -516,6 +578,13 @@ export default function ZapDetailPage() {
           <p>
             <span className="font-semibold">Webhook URL:</span>{" "}
             <span className="break-all">{webhookUrl || "Unavailable"}</span>
+            <button
+              onClick={copyWebhookUrl}
+              className="ml-2 rounded border border-gray-300 px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-50"
+              disabled={!webhookUrl}
+            >
+              Copy
+            </button>
           </p>
         </div>
 
@@ -537,6 +606,21 @@ export default function ZapDetailPage() {
           >
             Edit Actions
           </button>
+        </div>
+
+        <div className="mt-3">
+          <p className="text-xs font-medium text-gray-600">Test payload presets</p>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {testPayloadPresets.map((preset) => (
+              <button
+                key={preset.id}
+                onClick={() => applyPayloadPreset(preset.id)}
+                className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {testResult && (
@@ -579,7 +663,17 @@ export default function ZapDetailPage() {
         {runsError && <p className="text-sm text-red-600">{runsError}</p>}
         {runsLoading && <p className="text-sm text-gray-500">Loading runs...</p>}
         {!runsLoading && runs.length === 0 && (
-          <p className="text-sm text-gray-500">No runs yet. Send a test event to create one.</p>
+          <div className="rounded border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-700">
+            <p className="font-semibold text-gray-900">No runs yet</p>
+            <p className="mt-1 text-xs text-gray-600">
+              Use a payload preset and click <span className="font-semibold">Send Test Event</span> to create your first run.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-gray-600">
+              <span className="rounded bg-white px-2 py-1">Pick preset</span>
+              <span className="rounded bg-white px-2 py-1">Send test event</span>
+              <span className="rounded bg-white px-2 py-1">Open run details</span>
+            </div>
+          </div>
         )}
 
         {runs.length > 0 && (

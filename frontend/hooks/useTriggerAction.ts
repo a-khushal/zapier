@@ -16,6 +16,7 @@ export function useTriggerAction() {
     const [availableTriggers, setAvailableTriggers] = useState<TriggerActionRes[]>([]);
     const [availableActions, setAvailableActions] = useState<TriggerActionRes[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -41,8 +42,9 @@ export function useTriggerAction() {
 
                 setAvailableTriggers(triggerRes.data.availableTriggers);
                 setAvailableActions(actionRes.data.availableActions);
+                setError(null);
             } catch (err: any) {
-                throw new Error(`Failed to fetch triggers or actions: ${err.message}`);
+                setError(`Failed to fetch triggers or actions: ${err.message}`);
             } finally {
                 setLoading(false);
             }
@@ -51,6 +53,5 @@ export function useTriggerAction() {
         fetchData();
     }, []);
 
-    console.log(availableActions, availableTriggers)
-    return { availableTriggers, availableActions, loading };
+    return { availableTriggers, availableActions, loading, error };
 }

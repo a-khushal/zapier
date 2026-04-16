@@ -51,6 +51,7 @@ interface Zap {
 function useZaps() {
     const [loading, setLoading] = useState(true);
     const [zaps, setZaps] = useState<Zap[]>([]);
+    const [error, setError] = useState<string | null>(null);
 
     const fetchZaps = async () => {
         try {
@@ -67,8 +68,10 @@ function useZaps() {
             });
 
             setZaps(response.data.zaps);
+            setError(null);
         } catch (error) {
-            console.error(error);
+            const err = error as any;
+            setError(err.response?.data?.message || err.message || "Failed to load zaps");
         } finally {
             setLoading(false);
         }
@@ -78,12 +81,12 @@ function useZaps() {
         fetchZaps();
     }, []);
 
-    return { loading, zaps, setZaps, fetchZaps };
+    return { loading, error, zaps, setZaps, fetchZaps };
 }
 
 export default function Dashboard() {
     useAuth();
-    const { loading, zaps, setZaps, fetchZaps } = useZaps();
+    const { loading, error: zapsError, zaps, setZaps, fetchZaps } = useZaps();
     const { showToast } = useToast();
     const router = useRouter()
     const [pendingDeleteZapId, setPendingDeleteZapId] = useState<string | null>(null);
@@ -199,6 +202,16 @@ export default function Dashboard() {
                 </div>
                 {loading ? (
                     <div className="text-center text-gray-500">Loading...</div>
+                ) : zapsError ? (
+                    <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                        <p>{zapsError}</p>
+                        <button
+                            onClick={fetchZaps}
+                            className="mt-2 rounded border border-red-300 bg-white px-3 py-1 text-xs text-red-700 hover:bg-red-100"
+                        >
+                            Retry
+                        </button>
+                    </div>
                 ) : (
                     <ZapsTable
                         zaps={zaps}
@@ -342,7 +355,19 @@ function ZapsTable({
                         ))
                     ) : (
                         <tr>
-                            <td colSpan={7} className="px-4 py-4 text-center text-gray-500">No zaps found.</td>
+                            <td colSpan={7} className="px-4 py-8 text-center">
+                                <div className="mx-auto max-w-xl rounded border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-700">
+                                    <p className="font-semibold text-gray-900">No zaps yet</p>
+                                    <p className="mt-1 text-xs text-gray-600">
+                                        Start with a template on the create page, publish your zap, then send a test event.
+                                    </p>
+                                    <div className="mt-3 flex flex-wrap justify-center gap-2 text-xs text-gray-600">
+                                        <span className="rounded bg-white px-2 py-1">1. Create from template</span>
+                                        <span className="rounded bg-white px-2 py-1">2. Configure action URL</span>
+                                        <span className="rounded bg-white px-2 py-1">3. Publish and test</span>
+                                    </div>
+                                </div>
+                            </td>
                         </tr>
                     )}
                 </tbody>
