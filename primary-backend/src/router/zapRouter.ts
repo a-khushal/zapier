@@ -4,8 +4,10 @@ dotenv.config({ path: "../.env" });
 import { Router } from "express";
 import { authMiddleWare } from "../middleware";
 import {
+    TestSlackWebhookSchema,
     TestPostWebhookSchema,
     ValidatePostWebhookMetadataSchema,
+    ValidateSlackWebhookMetadataSchema,
     ZapCreateSchema,
     ZapStatusUpdateSchema,
     ZapUpdateSchema,
@@ -81,16 +83,25 @@ function parsePositiveInt(value: unknown, fallback: number) {
 }
 
 function normalizeActionMetadata(availableActionId: string, actionMetadata: any) {
-    if (availableActionId !== "post_webhook") {
-        return actionMetadata || {};
+    if (availableActionId === "post_webhook") {
+        const metadataParsed = ValidatePostWebhookMetadataSchema.safeParse(actionMetadata || {});
+        if (!metadataParsed.success) {
+            throw { status: 422, message: "Invalid post_webhook action metadata" };
+        }
+
+        return metadataParsed.data;
     }
 
-    const metadataParsed = ValidatePostWebhookMetadataSchema.safeParse(actionMetadata || {});
-    if (!metadataParsed.success) {
-        throw { status: 422, message: "Invalid post_webhook action metadata" };
+    if (availableActionId === "send_slack") {
+        const metadataParsed = ValidateSlackWebhookMetadataSchema.safeParse(actionMetadata || {});
+        if (!metadataParsed.success) {
+            throw { status: 422, message: "Invalid send_slack action metadata" };
+        }
+
+        return metadataParsed.data;
     }
 
-    return metadataParsed.data;
+    return actionMetadata || {};
 }
 
 router.post("", authMiddleWare, async (req, res) => {
@@ -127,6 +138,7 @@ router.post("", authMiddleWare, async (req, res) => {
                 data: {
                     triggerId: parsedResponse.data.availableTriggerId,
                     zapId: zap.id,
+                    metadata: parsedResponse.data.triggerMetadata || {},
                 },
             });
 
@@ -226,6 +238,74 @@ router.post("/test-post-webhook", authMiddleWare, async (req, res) => {
         }
     } catch (error: any) {
         console.error("Test post webhook error:", error);
+        res.status(error.status || 500).json({
+            message: error.message || "Internal server error",
+        });
+    }
+});
+
+router.post("/test-send-slack", authMiddleWare, async (req, res) => {
+    try {
+        const parsedResponse = TestSlackWebhookSchema.safeParse(req.body);
+        if (!parsedResponse.success) {
+            throw { status: 422, message: "Incorrect inputs" };
+        }
+
+        const metadata = parsedResponse.data.actionMetadata;
+        const samplePayload = parsedResponse.data.samplePayload;
+        const renderedMessage = renderBodyTemplate(metadata.messageTemplate, samplePayload);
+
+        const requestBody: Record<string, string> = {
+            text: renderedMessage,
+        };
+
+        if (metadata.username) {
+            requestBody.username = metadata.username;
+        }
+        if (metadata.iconEmoji) {
+            requestBody.icon_emoji = metadata.iconEmoji;
+        }
+        if (metadata.channel) {
+            requestBody.channel = metadata.channel;
+        }
+
+        const requestPreview = {
+            webhookUrl: metadata.webhookUrl,
+            bodyPreview: JSON.stringify(requestBody).slice(0, 500),
+            timeoutMs: REQUEST_TIMEOUT_MS,
+        };
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+        try {
+            const response = await fetch(metadata.webhookUrl, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(requestBody),
+                signal: controller.signal,
+            });
+
+            const responseBody = await response.text();
+            res.json({
+                ok: response.status < 400,
+                requestPreview,
+                responseStatus: response.status,
+                responseBody,
+            });
+        } catch (error) {
+            res.json({
+                ok: false,
+                requestPreview,
+                error: String(error),
+            });
+        } finally {
+            clearTimeout(timeout);
+        }
+    } catch (error: any) {
+        console.error("Test send slack error:", error);
         res.status(error.status || 500).json({
             message: error.message || "Internal server error",
         });

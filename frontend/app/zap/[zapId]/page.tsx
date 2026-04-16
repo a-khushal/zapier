@@ -74,6 +74,9 @@ type ZapDetail = {
   isActive: boolean;
   trigger: {
     id: string;
+    metadata?: {
+      samplePayload?: Record<string, unknown>;
+    };
     type: TriggerType;
   };
   actions: Array<{
@@ -327,7 +330,8 @@ export default function ZapDetailPage() {
       return;
     }
 
-    setTestPayloadInput('{"name":"Alice","event":"signup"}');
+    const defaultPayload = zap?.trigger?.metadata?.samplePayload || { name: "Alice", event: "signup" };
+    setTestPayloadInput(JSON.stringify(defaultPayload, null, 2));
     setIsTestPayloadModalOpen(true);
   };
 

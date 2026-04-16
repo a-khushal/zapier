@@ -34,6 +34,7 @@ export const SignInSchema = z.object({
 
 export const ZapCreateSchema = z.object({
     availableTriggerId: z.string(),
+    triggerMetadata: z.any().optional(),
     actions: z.array(z.object({
         availableActionId: z.string(),
         actionMetadata: z.any().optional()
@@ -88,4 +89,20 @@ export const TestPostWebhookSchema = z.object({
     samplePayload: z.any(),
 });
 
+const SlackWebhookMetadataSchema = z.object({
+    webhookUrl: z.string().url().refine(isHttpOrHttpsUrl, {
+        message: "Webhook URL must be http or https",
+    }),
+    messageTemplate: z.string().trim().min(1),
+    username: z.string().optional(),
+    iconEmoji: z.string().optional(),
+    channel: z.string().optional(),
+});
+
+export const TestSlackWebhookSchema = z.object({
+    actionMetadata: SlackWebhookMetadataSchema,
+    samplePayload: z.any(),
+});
+
 export const ValidatePostWebhookMetadataSchema = PostWebhookMetadataSchema;
+export const ValidateSlackWebhookMetadataSchema = SlackWebhookMetadataSchema;

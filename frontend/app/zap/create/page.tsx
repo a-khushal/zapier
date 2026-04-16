@@ -51,9 +51,76 @@ type PostWebhookMetadata = {
   bodyTemplate?: string;
 };
 
+type SlackWebhookMetadata = {
+  webhookUrl: string;
+  messageTemplate: string;
+  username?: string;
+  iconEmoji?: string;
+  channel?: string;
+};
+
+type TriggerTemplatePreset = {
+  id: string;
+  label: string;
+  payload: Record<string, unknown>;
+};
+
 const NODE_VERTICAL_GAP = 170;
 
 const ALLOWED_METHODS: PostWebhookMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+
+const WEBHOOK_TRIGGER_PRESETS: TriggerTemplatePreset[] = [
+  {
+    id: "signup",
+    label: "User Signup",
+    payload: {
+      event: "user.signup",
+      user: {
+        id: "usr_123",
+        name: "Alice",
+        email: "alice@example.com",
+      },
+      source: "webhook",
+      timestamp: "2026-04-16T00:00:00.000Z",
+    },
+  },
+  {
+    id: "payment_success",
+    label: "Payment Success",
+    payload: {
+      event: "payment.captured",
+      payment: {
+        id: "pay_987",
+        orderId: "ord_333",
+        amount: 1499,
+        currency: "INR",
+      },
+      customer: {
+        name: "Alice",
+        email: "alice@example.com",
+      },
+      timestamp: "2026-04-16T00:00:00.000Z",
+    },
+  },
+  {
+    id: "order_created",
+    label: "Order Created",
+    payload: {
+      event: "order.created",
+      order: {
+        id: "ord_123",
+        total: 2499,
+        currency: "INR",
+        status: "created",
+      },
+      customer: {
+        id: "cus_111",
+        name: "Alice",
+      },
+      timestamp: "2026-04-16T00:00:00.000Z",
+    },
+  },
+];
 
 function isValidHttpUrl(value: string) {
   try {
@@ -94,6 +161,35 @@ function getPostWebhookMetadata(
     method,
     headers,
     bodyTemplate: typeof raw.bodyTemplate === "string" ? raw.bodyTemplate : base.bodyTemplate,
+  };
+}
+
+function getDefaultSlackWebhookMetadata(): SlackWebhookMetadata {
+  return {
+    webhookUrl: "",
+    messageTemplate: "New event received: {{payload.event}}",
+    username: "Synq Bot",
+    iconEmoji: ":zap:",
+    channel: "",
+  };
+}
+
+function getSlackWebhookMetadata(actionMetadata: Record<string, unknown> | undefined): SlackWebhookMetadata {
+  const base = getDefaultSlackWebhookMetadata();
+  if (!actionMetadata || typeof actionMetadata !== "object") {
+    return base;
+  }
+
+  const raw = actionMetadata as any;
+  return {
+    webhookUrl: typeof raw.webhookUrl === "string" ? raw.webhookUrl : base.webhookUrl,
+    messageTemplate:
+      typeof raw.messageTemplate === "string" && raw.messageTemplate.trim()
+        ? raw.messageTemplate
+        : base.messageTemplate,
+    username: typeof raw.username === "string" ? raw.username : base.username,
+    iconEmoji: typeof raw.iconEmoji === "string" ? raw.iconEmoji : base.iconEmoji,
+    channel: typeof raw.channel === "string" ? raw.channel : base.channel,
   };
 }
 
@@ -161,6 +257,7 @@ function App() {
   const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false);
   const [disabledActionNodeIds, setDisabledActionNodeIds] = useState<string[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [selectedTriggerTemplateId, setSelectedTriggerTemplateId] = useState<string>(WEBHOOK_TRIGGER_PRESETS[0].id);
 
   const markDirty = useCallback(() => {
     setHasUnsavedChanges(true);
@@ -215,6 +312,11 @@ function App() {
           (action) => action.nodeId === selectedNodeId && action.id === "post_webhook"
         );
         actionMetadata = existing?.actionMetadata || getDefaultPostWebhookMetadata();
+      } else if (app.id === "send_slack") {
+        const existing = selectedActions.find(
+          (action) => action.nodeId === selectedNodeId && action.id === "send_slack"
+        );
+        actionMetadata = existing?.actionMetadata || getDefaultSlackWebhookMetadata();
       }
 
       setSelectedActions(prev => {
@@ -247,7 +349,7 @@ function App() {
 
     setModalTitle(app.name);
     setIsModalOpen(false);
-    setIsActionConfigOpen(app.id === "post_webhook");
+    setIsActionConfigOpen(app.id === "post_webhook" || app.id === "send_slack");
   };
 
   const onConnect = useCallback(
@@ -564,9 +666,29 @@ function App() {
     );
   };
 
+  const updateSlackWebhookMetadata = (
+    nodeId: string,
+    updater: (current: SlackWebhookMetadata) => SlackWebhookMetadata
+  ) => {
+    markDirty();
+    setSelectedActions((prev) =>
+      prev.map((action) => {
+        if (action.nodeId !== nodeId || action.id !== "send_slack") {
+          return action;
+        }
+
+        const nextMetadata = updater(getSlackWebhookMetadata(action.actionMetadata));
+        return {
+          ...action,
+          actionMetadata: nextMetadata,
+        };
+      })
+    );
+  };
+
   const handleTestAction = (action: TriggerActionRes) => {
-    if (action.id !== "post_webhook") {
-      showToast({ type: "info", title: "Test Action is only available for post_webhook" });
+    if (action.id !== "post_webhook" && action.id !== "send_slack") {
+      showToast({ type: "info", title: "Test Action is available for post_webhook or send_slack" });
       return;
     }
 
@@ -575,19 +697,44 @@ function App() {
       return;
     }
 
-    const normalizedMetadata = getPostWebhookMetadata(action.actionMetadata);
-    if (!normalizedMetadata.url.trim()) {
-      showToast({ type: "error", title: "Webhook URL is required" });
-      return;
+    if (action.id === "post_webhook") {
+      const normalizedMetadata = getPostWebhookMetadata(action.actionMetadata);
+      if (!normalizedMetadata.url.trim()) {
+        showToast({ type: "error", title: "Webhook URL is required" });
+        return;
+      }
+
+      if (!isValidHttpUrl(normalizedMetadata.url.trim())) {
+        showToast({ type: "error", title: "Webhook URL must be a valid http/https URL" });
+        return;
+      }
     }
 
-    if (!isValidHttpUrl(normalizedMetadata.url.trim())) {
-      showToast({ type: "error", title: "Webhook URL must be a valid http/https URL" });
-      return;
+    if (action.id === "send_slack") {
+      const normalizedMetadata = getSlackWebhookMetadata(action.actionMetadata);
+      if (!normalizedMetadata.webhookUrl.trim()) {
+        showToast({ type: "error", title: "Slack webhook URL is required" });
+        return;
+      }
+      if (!isValidHttpUrl(normalizedMetadata.webhookUrl.trim())) {
+        showToast({ type: "error", title: "Slack webhook URL must be a valid http/https URL" });
+        return;
+      }
+      if (!normalizedMetadata.messageTemplate.trim()) {
+        showToast({ type: "error", title: "Slack message template is required" });
+        return;
+      }
     }
+
+    const selectedPreset = WEBHOOK_TRIGGER_PRESETS.find(
+      (preset) => preset.id === selectedTriggerTemplateId
+    ) || WEBHOOK_TRIGGER_PRESETS[0];
+    const defaultPayload = selectedTrigger?.id === "webhook_catch"
+      ? selectedPreset.payload
+      : { name: "Alice", event: "signup" };
 
     setPendingTestAction(action);
-    setTestPayloadInput('{"name":"Alice","event":"signup"}');
+    setTestPayloadInput(JSON.stringify(defaultPayload, null, 2));
     setIsTestPayloadModalOpen(true);
   };
 
@@ -609,7 +756,9 @@ function App() {
       return;
     }
 
-    const normalizedMetadata = getPostWebhookMetadata(pendingTestAction.actionMetadata);
+    const normalizedMetadata = pendingTestAction.id === "post_webhook"
+      ? getPostWebhookMetadata(pendingTestAction.actionMetadata)
+      : getSlackWebhookMetadata(pendingTestAction.actionMetadata);
     const testKey = pendingTestAction.nodeId || pendingTestAction.id;
     setIsTestingAction(true);
     setActionTestResults((prev) => ({
@@ -624,7 +773,7 @@ function App() {
       }
 
       const response = await axios.post(
-        `${BACKEND_URL}/api/v1/zap/test-post-webhook`,
+        `${BACKEND_URL}/api/v1/zap/${pendingTestAction.id === "send_slack" ? "test-send-slack" : "test-post-webhook"}`,
         {
           actionMetadata: normalizedMetadata,
           samplePayload,
@@ -712,29 +861,57 @@ function App() {
       }
 
       for (const action of enabledActions) {
-        if (action.id !== "post_webhook") {
-          continue;
+        if (action.id === "post_webhook") {
+          const metadata = getPostWebhookMetadata(action.actionMetadata);
+          if (!metadata.url.trim()) {
+            showToast({ type: "error", title: `Step ${action.nodeId || "-"}: URL is required` });
+            return;
+          }
+
+          if (!isValidHttpUrl(metadata.url.trim())) {
+            showToast({ type: "error", title: `Step ${action.nodeId || "-"}: URL must be a valid http/https URL` });
+            return;
+          }
         }
 
-        const metadata = getPostWebhookMetadata(action.actionMetadata);
-        if (!metadata.url.trim()) {
-          showToast({ type: "error", title: `Step ${action.nodeId || "-"}: URL is required` });
-          return;
-        }
-
-        if (!isValidHttpUrl(metadata.url.trim())) {
-          showToast({ type: "error", title: `Step ${action.nodeId || "-"}: URL must be a valid http/https URL` });
-          return;
+        if (action.id === "send_slack") {
+          const metadata = getSlackWebhookMetadata(action.actionMetadata);
+          if (!metadata.webhookUrl.trim()) {
+            showToast({ type: "error", title: `Step ${action.nodeId || "-"}: Slack webhook URL is required` });
+            return;
+          }
+          if (!isValidHttpUrl(metadata.webhookUrl.trim())) {
+            showToast({ type: "error", title: `Step ${action.nodeId || "-"}: Slack webhook URL must be valid` });
+            return;
+          }
+          if (!metadata.messageTemplate.trim()) {
+            showToast({ type: "error", title: `Step ${action.nodeId || "-"}: Slack message template is required` });
+            return;
+          }
         }
       }
 
+      const selectedTriggerTemplate = WEBHOOK_TRIGGER_PRESETS.find((preset) => preset.id === selectedTriggerTemplateId)
+        || WEBHOOK_TRIGGER_PRESETS[0];
+
+      const triggerMetadata = selectedTrigger.id === "webhook_catch"
+        ? {
+          templateId: selectedTriggerTemplate.id,
+          templateLabel: selectedTriggerTemplate.label,
+          samplePayload: selectedTriggerTemplate.payload,
+        }
+        : {};
+
       const zapData = {
         availableTriggerId: selectedTrigger.id,
+        triggerMetadata,
         actions: enabledActions.map(action => ({
           availableActionId: action.id,
           actionMetadata:
             action.id === "post_webhook"
               ? getPostWebhookMetadata(action.actionMetadata)
+              : action.id === "send_slack"
+                ? getSlackWebhookMetadata(action.actionMetadata)
               : action.actionMetadata
         }))
       };
@@ -764,22 +941,37 @@ function App() {
   const activeConfigAction =
     selectedNodeId
       ? selectedActions.find(
-        (action) => action.nodeId === selectedNodeId && action.id === "post_webhook"
+        (action) =>
+          action.nodeId === selectedNodeId &&
+          (action.id === "post_webhook" || action.id === "send_slack")
       ) || null
       : null;
-  const activeConfigMetadata = activeConfigAction
+  const activePostWebhookMetadata = activeConfigAction?.id === "post_webhook"
     ? getPostWebhookMetadata(activeConfigAction.actionMetadata)
+    : null;
+  const activeSlackWebhookMetadata = activeConfigAction?.id === "send_slack"
+    ? getSlackWebhookMetadata(activeConfigAction.actionMetadata)
     : null;
   const activeTestKey = activeConfigAction
     ? activeConfigAction.nodeId || activeConfigAction.id
     : null;
   const activeTestResult = activeTestKey ? actionTestResults[activeTestKey] : undefined;
   const isActiveConfigDisabled = !!activeConfigAction?.nodeId && isNodeDisabled(String(activeConfigAction.nodeId));
-  const canTestActiveConfig =
-    !!activeConfigMetadata &&
-    activeConfigMetadata.url.trim().length > 0 &&
-    isValidHttpUrl(activeConfigMetadata.url.trim()) &&
-    !isActiveConfigDisabled;
+  const selectedTriggerPreset = WEBHOOK_TRIGGER_PRESETS.find(
+    (preset) => preset.id === selectedTriggerTemplateId
+  ) || WEBHOOK_TRIGGER_PRESETS[0];
+  const canTestActiveConfig = activeConfigAction?.id === "post_webhook"
+    ? !!activePostWebhookMetadata &&
+    activePostWebhookMetadata.url.trim().length > 0 &&
+    isValidHttpUrl(activePostWebhookMetadata.url.trim()) &&
+    !isActiveConfigDisabled
+    : activeConfigAction?.id === "send_slack"
+      ? !!activeSlackWebhookMetadata &&
+      activeSlackWebhookMetadata.webhookUrl.trim().length > 0 &&
+      isValidHttpUrl(activeSlackWebhookMetadata.webhookUrl.trim()) &&
+      activeSlackWebhookMetadata.messageTemplate.trim().length > 0 &&
+      !isActiveConfigDisabled
+      : false;
 
   return (
     <div
@@ -819,6 +1011,43 @@ function App() {
         <Controls />
       </ReactFlow>
 
+      {selectedTrigger?.id === "webhook_catch" && (
+        <div className="fixed left-10 top-[94px] z-50 w-[380px] rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h3 className="text-sm font-semibold text-gray-900">Webhook Trigger Template</h3>
+          <p className="mt-1 text-xs text-gray-600">
+            Pick a sample payload preset to speed up testing and onboarding.
+          </p>
+
+          <div className="mt-3">
+            <label className="block text-xs font-medium text-gray-600">Preset</label>
+            <select
+              value={selectedTriggerTemplateId}
+              onChange={(e) => {
+                markDirty();
+                setSelectedTriggerTemplateId(e.target.value);
+              }}
+              className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+            >
+              {WEBHOOK_TRIGGER_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="mt-3">
+            <label className="block text-xs font-medium text-gray-600">Sample Payload</label>
+            <textarea
+              rows={8}
+              readOnly
+              value={JSON.stringify(selectedTriggerPreset.payload, null, 2)}
+              className="mt-1 w-full rounded border border-gray-300 bg-gray-50 px-2 py-1 font-mono text-[11px] text-gray-700"
+            />
+          </div>
+        </div>
+      )}
+
       <div className="fixed right-10 z-50" style={{ top: 'calc(1rem + 28px + 2px + 2rem)' }}>
         <div className="flex items-center gap-2">
           {hasUnsavedChanges && (
@@ -839,13 +1068,13 @@ function App() {
         </div>
       </div>
 
-      {isActionConfigOpen && activeConfigAction && activeConfigMetadata && (
+      {isActionConfigOpen && activeConfigAction && (activePostWebhookMetadata || activeSlackWebhookMetadata) && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
           onClick={() => setIsActionConfigOpen(false)}
         >
           <div
-            className="w-full max-w-2xl max-h-[90vh] overflow-auto rounded-lg border border-gray-200 bg-white p-5 shadow-lg"
+            className="w-full max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden rounded-lg border border-gray-200 bg-white p-5 shadow-lg"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between">
@@ -867,129 +1096,212 @@ function App() {
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-medium text-gray-600">URL</label>
-                <input
-                  type="text"
-                  value={activeConfigMetadata.url}
-                  onChange={(e) =>
-                    updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
-                      ...current,
-                      url: e.target.value,
-                    }))
-                  }
-                  placeholder="https://example.com/webhook"
-                  className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
-                />
-              </div>
+              {activeConfigAction.id === "post_webhook" && activePostWebhookMetadata && (
+                <>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600">URL</label>
+                    <input
+                      type="text"
+                      value={activePostWebhookMetadata.url}
+                      onChange={(e) =>
+                        updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                          ...current,
+                          url: e.target.value,
+                        }))
+                      }
+                      placeholder="https://example.com/webhook"
+                      className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                    />
+                  </div>
 
-              <div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600">Method</label>
-                  <select
-                    value={activeConfigMetadata.method}
-                    onChange={(e) =>
-                      updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
-                        ...current,
-                        method: e.target.value as PostWebhookMethod,
-                      }))
-                    }
-                    className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
-                  >
-                    {ALLOWED_METHODS.map((method) => (
-                      <option key={method} value={method}>
-                        {method}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600">Method</label>
+                    <select
+                      value={activePostWebhookMetadata.method}
+                      onChange={(e) =>
+                        updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                          ...current,
+                          method: e.target.value as PostWebhookMethod,
+                        }))
+                      }
+                      className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                    >
+                      {ALLOWED_METHODS.map((method) => (
+                        <option key={method} value={method}>
+                          {method}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-              <div>
-                <label className="block text-xs font-medium text-gray-600">Headers</label>
-                <div className="mt-1 space-y-1">
-                  {activeConfigMetadata.headers.map((header, index) => (
-                    <div key={index} className="flex items-center gap-1">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600">Headers</label>
+                    <div className="mt-1 space-y-1">
+                      {activePostWebhookMetadata.headers.map((header, index) => (
+                        <div key={index} className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={header.key}
+                            onChange={(e) =>
+                              updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => {
+                                const nextHeaders = [...current.headers];
+                                nextHeaders[index] = {
+                                  ...nextHeaders[index],
+                                  key: e.target.value,
+                                };
+                                return {
+                                  ...current,
+                                  headers: nextHeaders,
+                                };
+                              })
+                            }
+                            placeholder="Key"
+                            className="w-[45%] rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <input
+                            type="text"
+                            value={header.value}
+                            onChange={(e) =>
+                              updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => {
+                                const nextHeaders = [...current.headers];
+                                nextHeaders[index] = {
+                                  ...nextHeaders[index],
+                                  value: e.target.value,
+                                };
+                                return {
+                                  ...current,
+                                  headers: nextHeaders,
+                                };
+                              })
+                            }
+                            placeholder="Value"
+                            className="w-[45%] rounded border border-gray-300 px-2 py-1 text-xs"
+                          />
+                          <button
+                            onClick={() =>
+                              updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                                ...current,
+                                headers: current.headers.filter((_, headerIndex) => headerIndex !== index),
+                              }))
+                            }
+                            className="flex h-7 w-7 items-center justify-center rounded border border-gray-300 text-sm leading-none text-gray-500 hover:border-red-300 hover:text-red-500"
+                          >
+                            x
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() =>
+                        updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                          ...current,
+                          headers: [...current.headers, { key: "", value: "" }],
+                        }))
+                      }
+                      className="mt-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      + Add Header
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600">Body Template (JSON)</label>
+                    <textarea
+                      rows={4}
+                      value={activePostWebhookMetadata.bodyTemplate || ""}
+                      onChange={(e) =>
+                        updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                          ...current,
+                          bodyTemplate: e.target.value,
+                        }))
+                      }
+                      placeholder='{"name":"{{payload.name}}","event":"{{payload.event}}"}'
+                      className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                    />
+                  </div>
+                </>
+              )}
+
+              {activeConfigAction.id === "send_slack" && activeSlackWebhookMetadata && (
+                <>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600">Slack Webhook URL</label>
+                    <input
+                      type="text"
+                      value={activeSlackWebhookMetadata.webhookUrl}
+                      onChange={(e) =>
+                        updateSlackWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                          ...current,
+                          webhookUrl: e.target.value,
+                        }))
+                      }
+                      placeholder="https://hooks.slack.com/services/..."
+                      className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600">Message Template</label>
+                    <textarea
+                      rows={4}
+                      value={activeSlackWebhookMetadata.messageTemplate}
+                      onChange={(e) =>
+                        updateSlackWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                          ...current,
+                          messageTemplate: e.target.value,
+                        }))
+                      }
+                      placeholder="Payment received for {{payload.customer.name}}"
+                      className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Username (optional)</label>
                       <input
                         type="text"
-                        value={header.key}
+                        value={activeSlackWebhookMetadata.username || ""}
                         onChange={(e) =>
-                          updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => {
-                            const nextHeaders = [...current.headers];
-                            nextHeaders[index] = {
-                              ...nextHeaders[index],
-                              key: e.target.value,
-                            };
-                            return {
-                              ...current,
-                              headers: nextHeaders,
-                            };
-                          })
-                        }
-                        placeholder="Key"
-                        className="w-[45%] rounded border border-gray-300 px-2 py-1 text-xs"
-                      />
-                      <input
-                        type="text"
-                        value={header.value}
-                        onChange={(e) =>
-                          updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => {
-                            const nextHeaders = [...current.headers];
-                            nextHeaders[index] = {
-                              ...nextHeaders[index],
-                              value: e.target.value,
-                            };
-                            return {
-                              ...current,
-                              headers: nextHeaders,
-                            };
-                          })
-                        }
-                        placeholder="Value"
-                        className="w-[45%] rounded border border-gray-300 px-2 py-1 text-xs"
-                      />
-                      <button
-                        onClick={() =>
-                          updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                          updateSlackWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
                             ...current,
-                            headers: current.headers.filter((_, headerIndex) => headerIndex !== index),
+                            username: e.target.value,
                           }))
                         }
-                        className="flex h-7 w-7 items-center justify-center rounded border border-gray-300 text-sm leading-none text-gray-500 hover:border-red-300 hover:text-red-500"
-                      >
-                        x
-                      </button>
+                        className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                      />
                     </div>
-                  ))}
-                </div>
-                <button
-                  onClick={() =>
-                    updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
-                      ...current,
-                      headers: [...current.headers, { key: "", value: "" }],
-                    }))
-                  }
-                  className="mt-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-                >
-                  + Add Header
-                </button>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-600">Body Template (JSON)</label>
-                <textarea
-                  rows={4}
-                  value={activeConfigMetadata.bodyTemplate || ""}
-                  onChange={(e) =>
-                    updatePostWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
-                      ...current,
-                      bodyTemplate: e.target.value,
-                    }))
-                  }
-                  placeholder='{"name":"{{payload.name}}","event":"{{payload.event}}"}'
-                  className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
-                />
-              </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Icon Emoji (optional)</label>
+                      <input
+                        type="text"
+                        value={activeSlackWebhookMetadata.iconEmoji || ""}
+                        onChange={(e) =>
+                          updateSlackWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                            ...current,
+                            iconEmoji: e.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Channel (optional)</label>
+                      <input
+                        type="text"
+                        value={activeSlackWebhookMetadata.channel || ""}
+                        onChange={(e) =>
+                          updateSlackWebhookMetadata(String(activeConfigAction.nodeId), (current) => ({
+                            ...current,
+                            channel: e.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="flex justify-end">
                 <button
@@ -1008,10 +1320,12 @@ function App() {
             {activeTestResult && !activeTestResult.isLoading && (
               <div className="mt-3 rounded bg-gray-50 p-2 text-xs text-gray-700">
                 {activeTestResult.requestPreview && (
-                  <p>
-                    <span className="font-semibold">Request:</span>{" "}
-                    {JSON.stringify(activeTestResult.requestPreview)}
-                  </p>
+                  <div className="mb-2">
+                    <p className="font-semibold">Request:</p>
+                    <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded border border-gray-200 bg-white p-2 font-mono text-[11px] text-gray-700">
+                      {JSON.stringify(activeTestResult.requestPreview, null, 2)}
+                    </pre>
+                  </div>
                 )}
                 {typeof activeTestResult.responseStatus === "number" && (
                   <p>
@@ -1020,15 +1334,20 @@ function App() {
                   </p>
                 )}
                 {typeof activeTestResult.responseBody === "string" && (
-                  <p>
-                    <span className="font-semibold">Response Body:</span>{" "}
-                    {activeTestResult.responseBody.slice(0, 300)}
-                  </p>
+                  <div className="mb-2 mt-1">
+                    <p className="font-semibold">Response Body:</p>
+                    <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded border border-gray-200 bg-white p-2 font-mono text-[11px] text-gray-700">
+                      {activeTestResult.responseBody.slice(0, 300)}
+                    </pre>
+                  </div>
                 )}
                 {activeTestResult.error && (
-                  <p className="text-red-600">
-                    <span className="font-semibold">Error:</span> {activeTestResult.error}
-                  </p>
+                  <div className="mt-1 text-red-600">
+                    <p className="font-semibold">Error:</p>
+                    <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded border border-red-200 bg-red-50 p-2 font-mono text-[11px] text-red-700">
+                      {activeTestResult.error}
+                    </pre>
+                  </div>
                 )}
               </div>
             )}

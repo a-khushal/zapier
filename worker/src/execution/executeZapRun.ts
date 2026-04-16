@@ -1,6 +1,7 @@
 import { BACKOFF_MS, MAX_ATTEMPTS } from "../config";
 import { db } from "../db";
 import { executePostWebhook } from "../actions/postWebhook";
+import { executeSendSlack } from "../actions/sendSlack";
 import { ActionExecutionResult, ActionForExecution } from "../types";
 
 function sleep(ms: number) {
@@ -10,6 +11,10 @@ function sleep(ms: number) {
 async function executeAction(action: ActionForExecution, payload: unknown): Promise<ActionExecutionResult> {
   if (action.actionId === "post_webhook") {
     return executePostWebhook(action, payload);
+  }
+
+  if (action.actionId === "send_slack") {
+    return executeSendSlack(action, payload);
   }
 
   return {
